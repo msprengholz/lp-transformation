@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "lp-transformation"
+version = "0.1.0"
+description = "Lamination parameter back-transformation: recover ply angles from target lamination parameters"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24.0",
+]
+optional-dependencies = {
+    dev = ["pytest>=7.4.0", "pytest-benchmark>=4.0.0"],
+    numba = ["numba>=0.58.0"],
+    slang = ["slangpy>=0.15.0"],
+    all = ["numba>=0.58.0", "slangpy>=0.15.0"],
+}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "benchmark: marks benchmark tests",
+]

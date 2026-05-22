@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.so
+
+# Environments
+.venv/
+venv/
+env/
+.env
+
+# Benchmarks
+benchmarks/results/
+experiments/results/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Numba cache
+__numba_cache*/
+
+# SlangPy
+*.slang-module

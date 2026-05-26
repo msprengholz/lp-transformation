@@ -7,6 +7,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-python3 colab/colab_exec.py --cmd \
+python colab/colab_exec.py --cmd \
   "cd /content/lp-transformation && python3 benchmarks/run_benchmark.py" \
   --timeout 600

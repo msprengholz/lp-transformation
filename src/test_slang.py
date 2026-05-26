@@ -17,7 +17,7 @@ float add_scalar(float a, float b) { return a + b; }
 [AutoPy]
 float4 add4(float4 a, float4 b) { return a + b; }
 """
-mod = sl.Module.load_from_source(source)
+mod = sl.Module.load_from_source("test_mod", source)
 
 r1 = mod.add_scalar(np.float32(2.0), np.float32(3.0))
 print("  add_scalar 2+3 =", r1)

@@ -27,7 +27,7 @@ except ImportError:
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _get_lp_numba(lam, Z2, Z3, invN, N2, N3):
     N = lam.size
-    lp = np.zeros(12, dtype=np.float32)
+    lp = np.empty(12, dtype=np.float32)
     cos2 = np.cos(lam * 2)
     sin2 = np.sin(lam * 2)
     cos4 = np.cos(lam * 4)
@@ -88,8 +88,8 @@ def _get_lp_numba(lam, Z2, Z3, invN, N2, N3):
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3):
     N = lam.size
-    lp = np.zeros(12, dtype=np.float32)
-    grad = np.zeros(N, dtype=np.float32)
+    lp = np.empty(12, dtype=np.float32)
+    grad = np.empty(N, dtype=np.float32)
 
     lam2 = lam * 2
     lam4 = lam * 4
@@ -174,7 +174,7 @@ def _trig_from_lam(lam):
 def _lp_from_trig(cos2, sin2, cos4, sin4, Z2, Z3, invN, N2, N3):
     """Compute 12 LP values from precomputed trig arrays."""
     N = cos2.size
-    lp = np.zeros(12, dtype=np.float32)
+    lp = np.empty(12, dtype=np.float32)
 
     c2 = 0.0; s2 = 0.0; c4 = 0.0; s4 = 0.0
     for i in range(N):

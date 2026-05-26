@@ -17,7 +17,7 @@ float add(float a, float b) { return a + b; }
 """
 print("Loading simple module...", flush=True)
 mod1 = sl.Module.load_from_source(dev, "simple", src1)
-v = mod1.add(np.float32(2.0), np.float32(3.0))
+v = mod1.add(float(2.0), float(3.0))
 print("  add(2, 3) =", v, flush=True)
 
 # Array test
@@ -32,7 +32,7 @@ float arr_sum(float[] arr, int N) {
 print("Loading array module...", flush=True)
 mod2 = sl.Module.load_from_source(dev, "arr_sum", src2)
 arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
-v2 = mod2.arr_sum(arr, np.int32(5))
+v2 = mod2.arr_sum(arr, int(5))
 print("  sum([1,2,3,4,5]) =", v2, flush=True)
 
 print("All tests passed!", flush=True)

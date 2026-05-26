@@ -8,6 +8,8 @@ Usage:
     from src.numba_solver import optimize_laminate_numba
 """
 
+import math
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from numpy.typing import NDArray
 
@@ -30,20 +32,17 @@ except ImportError:
 def _get_lp_numba(lam, Z2, Z3, invN, N2, N3):
     N = lam.size
     lp = np.zeros(12, dtype=np.float32)
-
     cos2 = np.cos(lam * 2)
     sin2 = np.sin(lam * 2)
     cos4 = np.cos(lam * 4)
     sin4 = np.sin(lam * 4)
 
-    # In-plane
     c2 = 0.0; s2 = 0.0; c4 = 0.0; s4 = 0.0
     for i in range(N):
         c2 += cos2[i]; s2 += sin2[i]; c4 += cos4[i]; s4 += sin4[i]
     lp[0] = c2 * invN; lp[1] = s2 * invN
     lp[2] = c4 * invN; lp[3] = s4 * invN
 
-    # Coupling — explicit loops (no inner functions in nopython)
     s = 0.0
     for i in range(N): s += Z2[i] * cos2[i]
     lp[4] = s * N2
@@ -56,7 +55,6 @@ def _get_lp_numba(lam, Z2, Z3, invN, N2, N3):
     s = 0.0
     for i in range(N): s += Z2[i] * sin4[i]
     lp[7] = s * N2
-    # Out-of-plane
     s = 0.0
     for i in range(N): s += Z3[i] * cos2[i]
     lp[8] = s * N3
@@ -69,60 +67,33 @@ def _get_lp_numba(lam, Z2, Z3, invN, N2, N3):
     s = 0.0
     for i in range(N): s += Z3[i] * sin4[i]
     lp[11] = s * N3
-
     return lp
 
-
-# ──────────────────────────────────────────────
-# JIT: combined LP + gradient
-# ──────────────────────────────────────────────
 
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3):
     N = lam.size
     lp = np.zeros(12, dtype=np.float32)
     grad = np.zeros(N, dtype=np.float32)
+    lam2 = lam * 2; lam4 = lam * 4
+    cos2 = np.cos(lam2); sin2 = np.sin(lam2)
+    cos4 = np.cos(lam4); sin4 = np.sin(lam4)
 
-    lam2 = lam * 2
-    lam4 = lam * 4
-    cos2 = np.cos(lam2)
-    sin2 = np.sin(lam2)
-    cos4 = np.cos(lam4)
-    sin4 = np.sin(lam4)
-
-    # LP
     c2 = 0.0; s2 = 0.0; c4 = 0.0; s4 = 0.0
     for i in range(N):
         c2 += cos2[i]; s2 += sin2[i]; c4 += cos4[i]; s4 += sin4[i]
     lp[0] = c2 * invN; lp[1] = s2 * invN
     lp[2] = c4 * invN; lp[3] = s4 * invN
+    s = 0.0
+    for i in range(N): s += Z2[i] * cos2[i]; lp[4] = s * N2; s = 0.0
+    for i in range(N): s += Z2[i] * sin2[i]; lp[5] = s * N2; s = 0.0
+    for i in range(N): s += Z2[i] * cos4[i]; lp[6] = s * N2; s = 0.0
+    for i in range(N): s += Z2[i] * sin4[i]; lp[7] = s * N2; s = 0.0
+    for i in range(N): s += Z3[i] * cos2[i]; lp[8] = s * N3; s = 0.0
+    for i in range(N): s += Z3[i] * sin2[i]; lp[9] = s * N3; s = 0.0
+    for i in range(N): s += Z3[i] * cos4[i]; lp[10] = s * N3; s = 0.0
+    for i in range(N): s += Z3[i] * sin4[i]; lp[11] = s * N3
 
-    s = 0.0
-    for i in range(N): s += Z2[i] * cos2[i]
-    lp[4] = s * N2
-    s = 0.0
-    for i in range(N): s += Z2[i] * sin2[i]
-    lp[5] = s * N2
-    s = 0.0
-    for i in range(N): s += Z2[i] * cos4[i]
-    lp[6] = s * N2
-    s = 0.0
-    for i in range(N): s += Z2[i] * sin4[i]
-    lp[7] = s * N2
-    s = 0.0
-    for i in range(N): s += Z3[i] * cos2[i]
-    lp[8] = s * N3
-    s = 0.0
-    for i in range(N): s += Z3[i] * sin2[i]
-    lp[9] = s * N3
-    s = 0.0
-    for i in range(N): s += Z3[i] * cos4[i]
-    lp[10] = s * N3
-    s = 0.0
-    for i in range(N): s += Z3[i] * sin4[i]
-    lp[11] = s * N3
-
-    # Gradient
     for k in range(N):
         val = (-2 * sin2[k] * (lp_t[0] - lp[0]) +
                 2 * cos2[k] * (lp_t[1] - lp[1]) +
@@ -137,20 +108,14 @@ def _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3):
                -2 * sin4[k] * Z3[k] * (lp_t[10] - lp[10]) +
                 2 * cos4[k] * Z3[k] * (lp_t[11] - lp[11]))
         grad[k] = -val * 2
-
     return lp, grad
 
-
-# ──────────────────────────────────────────────
-# JIT: sequential search
-# ──────────────────────────────────────────────
 
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _ssearch_numba(lam, lp_t, delta, ang_steps, Z2, Z3, invN, N2, N3):
     layers = lam.size
     best_lam = lam.copy()
     half_pi = np.float32(np.pi / 2.0)
-
     for i in range(layers):
         best_loss = np.float32(np.inf)
         for k in range(1, ang_steps + 1):
@@ -158,86 +123,62 @@ def _ssearch_numba(lam, lp_t, delta, ang_steps, Z2, Z3, invN, N2, N3):
             lp = _get_lp_numba(best_lam, Z2, Z3, invN, N2, N3)
             loss = np.float32(0.0)
             for j in range(12):
-                d = lp[j] - lp_t[j]
-                loss += d * d
+                d = lp[j] - lp_t[j]; loss += d * d
             loss = np.sqrt(loss)
             if loss < best_loss:
-                lam[i] = best_lam[i]
-                best_loss = loss
+                lam[i] = best_lam[i]; best_loss = loss
         best_lam[i] = lam[i]
-
     return best_lam
 
-
-# ──────────────────────────────────────────────
-# JIT: iRprop-
-# ──────────────────────────────────────────────
 
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _irpropm_numba(lam, lp_t, it_iRprop, Z2, Z3, invN, N2, N3,
                    sigma, s_min, s_max, n_p, n_m, grad_tol):
     layers = lam.size
     s = np.full(layers, sigma, dtype=np.float32)
-
     _, grad0 = _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3)
     grad1 = np.empty_like(grad0)
-
     for _ in range(it_iRprop):
         _, grad1 = _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3)
-
         gmax = np.float32(0.0)
         for k in range(layers):
             gmax = max(gmax, abs(grad1[k]))
         if gmax < grad_tol:
             break
-
         for k in range(layers):
             if grad0[k] * grad1[k] > 0:
                 s[k] = min(s[k] * n_p, s_max)
             elif grad0[k] * grad1[k] < 0:
-                s[k] = max(s[k] * n_m, s_min)
-                grad1[k] = np.float32(0.0)
+                s[k] = max(s[k] * n_m, s_min); grad1[k] = np.float32(0.0)
             lam[k] -= np.sign(grad1[k]) * s[k]
             grad0[k] = grad1[k]
-
     return lam
 
 
 # ──────────────────────────────────────────────
-# Helpers
+# Thread-safe per-start runner (NOT jit-decorated)
+# Runs one chunk of starts in a thread.  Each call to the
+# JIT functions releases the GIL (nogil=True), so threads
+# achieve true parallelism on CPU-bound work.
 # ──────────────────────────────────────────────
 
-def _prepare_arrays(N):
-    k = np.arange(N, dtype=np.float32)
-    Z2 = ((-N / 2 + k + 1) ** 2 - (-N / 2 + k) ** 2).astype(np.float32)
-    Z3 = ((-N / 2 + k + 1) ** 3 - (-N / 2 + k) ** 3).astype(np.float32)
-    fN = float(N)
-    return (Z2, Z3,
-            np.float32(1.0 / fN),
-            np.float32(2.0 / (fN * fN)),
-            np.float32(4.0 / (fN * fN * fN)))
-
-
-# ──────────────────────────────────────────────
-# Public API
-# ──────────────────────────────────────────────
-
-@jit(nopython=True, nogil=True, cache=True, fastmath=True, parallel=True)
-def _optimize_batch(rand_lams, lp_t,
-                    delta_coarse, ang_steps_coarse,
-                    delta_fine, ang_steps_fine,
-                    irprop_iters, irprop_grad_tol,
-                    n_coarse_fine,
-                    Z2, Z3, invN, N2, N3):
-    """Parallel batch optimisation using prange."""
-    num_samples, layers = rand_lams.shape
+def _run_chunk(rand_lams, lp_t, idx_start, idx_end,
+               delta_coarse, ang_steps_coarse,
+               delta_fine, ang_steps_fine,
+               irprop_iters, irprop_grad_tol,
+               n_coarse_fine,
+               Z2, Z3, invN, N2, N3):
+    """Optimise a slice of starts.  Runs in a ThreadPoolExecutor thread."""
+    chunk_size = idx_end - idx_start
+    layers = rand_lams.shape[1]
     half_pi = np.float32(np.pi / 2.0)
     pi_f = np.float32(np.pi)
-    optimised = np.empty_like(rand_lams)
-    losses = np.empty(num_samples, dtype=np.float32)
+    out = np.empty((chunk_size, layers), dtype=np.float32)
+    los = np.empty(chunk_size, dtype=np.float32)
 
-    for idx in prange(num_samples):
-        lam = rand_lams[idx].copy()
+    for local_i in range(chunk_size):
+        src_idx = idx_start + local_i
+        lam = rand_lams[src_idx].copy()
 
         for _ in range(n_coarse_fine):
             lam = _ssearch_numba(lam, lp_t, delta_coarse, ang_steps_coarse,
@@ -253,17 +194,26 @@ def _optimize_batch(rand_lams, lp_t,
 
         for k in range(layers):
             lam[k] = (lam[k] + half_pi) % pi_f - half_pi
-
-        optimised[idx] = lam
+        out[local_i] = lam
 
         lp = _get_lp_numba(lam, Z2, Z3, invN, N2, N3)
         s = np.float32(0.0)
         for j in range(12):
-            d = lp[j] - lp_t[j]
-            s += d * d
-        losses[idx] = np.sqrt(s / layers)
+            d = lp[j] - lp_t[j]; s += d * d
+        los[local_i] = np.sqrt(s / layers)
 
-    return optimised, losses
+    return idx_start, out, los
+
+
+def _prepare_arrays(N):
+    k = np.arange(N, dtype=np.float32)
+    Z2 = ((-N / 2 + k + 1) ** 2 - (-N / 2 + k) ** 2).astype(np.float32)
+    Z3 = ((-N / 2 + k + 1) ** 3 - (-N / 2 + k) ** 3).astype(np.float32)
+    fN = float(N)
+    return (Z2, Z3,
+            np.float32(1.0 / fN),
+            np.float32(2.0 / (fN * fN)),
+            np.float32(4.0 / (fN * fN * fN)))
 
 
 def optimize_laminate_numba(rand_lams: NDArray[np.float32],
@@ -274,10 +224,14 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
                             irprop_iters: int = 3000,
                             irprop_grad_tol: float = 1e-6,
                             ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-    """Full optimisation pipeline using numba-JIT kernels.
+    """
+    Full optimisation pipeline using numba-JIT kernels.
+
+    Multi-start runs are parallelised across CPU cores via
+    ``ThreadPoolExecutor`` --- each JIT call releases the GIL
+    (``nogil=True``), so threads achieve true parallelism.
 
     Falls back to numpy if numba is not installed.
-    Uses prange for multi-start parallelisation over CPU cores.
     """
     if not HAS_NUMBA:
         from .numpy_solver import optimize_laminate as _fb
@@ -286,15 +240,32 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
                     irprop_iters, irprop_grad_tol)
 
     Z2, Z3, invN, N2, N3 = _prepare_arrays(rand_lams.shape[1])
+    dc = np.float32(np.deg2rad(delta_coarse_deg))
+    df = np.float32(np.deg2rad(delta_fine_deg))
+    ac = int(np.floor(np.pi / dc))
+    af = int(np.floor(np.pi / df))
+    gtol = np.float32(irprop_grad_tol)
 
-    delta_coarse = np.float32(np.deg2rad(delta_coarse_deg))
-    delta_fine = np.float32(np.deg2rad(delta_fine_deg))
-    ang_steps_coarse = int(np.floor(np.pi / delta_coarse))
-    ang_steps_fine = int(np.floor(np.pi / delta_fine))
+    params = (dc, ac, df, af, irprop_iters, gtol, n_coarse_fine,
+              Z2, Z3, invN, N2, N3)
 
-    return _optimize_batch(rand_lams, lp_t,
-                            delta_coarse, ang_steps_coarse,
-                            delta_fine, ang_steps_fine,
-                            irprop_iters, np.float32(irprop_grad_tol),
-                            n_coarse_fine,
-                            Z2, Z3, invN, N2, N3)
+    num_samples = rand_lams.shape[0]
+    n_threads = min(8, num_samples)
+    chunk = int(math.ceil(num_samples / n_threads))
+
+    with ThreadPoolExecutor(max_workers=n_threads) as pool:
+        futures = []
+        for i in range(0, num_samples, chunk):
+            end = min(i + chunk, num_samples)
+            fut = pool.submit(_run_chunk, rand_lams, lp_t, i, end, *params)
+            futures.append(fut)
+
+    out = np.empty_like(rand_lams)
+    los = np.empty(num_samples, dtype=np.float32)
+    for fut in futures:
+        start, chunk_out, chunk_los = fut.result()
+        end = start + chunk_out.shape[0]
+        out[start:end] = chunk_out
+        los[start:end] = chunk_los
+
+    return out, los

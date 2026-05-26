@@ -160,59 +160,111 @@ def _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3):
 
 
 # ═══════════════════════════════════════════════
-# JIT: sequential search
+# JIT: trig arrays + LP from trig (for incremental ssearch)
 # ═══════════════════════════════════════════════
+
+@jit(nopython=True, nogil=True, cache=True, fastmath=True)
+def _trig_from_lam(lam):
+    """Compute cos2, sin2, cos4, sin4 arrays from a laminate."""
+    return (np.cos(lam * 2), np.sin(lam * 2),
+            np.cos(lam * 4), np.sin(lam * 4))
+
+
+@jit(nopython=True, nogil=True, cache=True, fastmath=True)
+def _lp_from_trig(cos2, sin2, cos4, sin4, Z2, Z3, invN, N2, N3):
+    """Compute 12 LP values from precomputed trig arrays."""
+    N = cos2.size
+    lp = np.zeros(12, dtype=np.float32)
+
+    c2 = 0.0; s2 = 0.0; c4 = 0.0; s4 = 0.0
+    for i in range(N):
+        c2 += cos2[i]; s2 += sin2[i]; c4 += cos4[i]; s4 += sin4[i]
+    lp[0] = c2 * invN; lp[1] = s2 * invN
+    lp[2] = c4 * invN; lp[3] = s4 * invN
+
+    s = 0.0
+    for i in range(N): s += Z2[i] * cos2[i]
+    lp[4] = s * N2; s = 0.0
+    for i in range(N): s += Z2[i] * sin2[i]
+    lp[5] = s * N2; s = 0.0
+    for i in range(N): s += Z2[i] * cos4[i]
+    lp[6] = s * N2; s = 0.0
+    for i in range(N): s += Z2[i] * sin4[i]
+    lp[7] = s * N2; s = 0.0
+    for i in range(N): s += Z3[i] * cos2[i]
+    lp[8] = s * N3; s = 0.0
+    for i in range(N): s += Z3[i] * sin2[i]
+    lp[9] = s * N3; s = 0.0
+    for i in range(N): s += Z3[i] * cos4[i]
+    lp[10] = s * N3; s = 0.0
+    for i in range(N): s += Z3[i] * sin4[i]
+    lp[11] = s * N3
+    return lp
+
+
+@jit(nopython=True, nogil=True, cache=True, fastmath=True)
+def _eval_angle(cos2, sin2, cos4, sin4, i, angle,
+                Z2, Z3, invN, N2, N3, lp_t):
+    """Set trig for layer i, compute LP RMSE loss."""
+    cos2[i] = np.cos(angle * 2)
+    sin2[i] = np.sin(angle * 2)
+    cos4[i] = np.cos(angle * 4)
+    sin4[i] = np.sin(angle * 4)
+    lp = _lp_from_trig(cos2, sin2, cos4, sin4, Z2, Z3, invN, N2, N3)
+    s = np.float32(0.0)
+    for j in range(12):
+        d = lp[j] - lp_t[j]; s += d * d
+    return np.sqrt(s)
+
 
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _ssearch_numba(lam, lp_t, delta, ang_steps, Z2, Z3, invN, N2, N3):
     """
-    Sequential search with two-stage evaluation.
+    Sequential search with incremental trig update.
 
-    Stage 1: evaluate every other angle (coarse grid at 2*delta).
-    Stage 2: evaluate neighbours of the best coarse angle.
-
-    ~11 evaluations per layer vs 18, same effective resolution.
+    Trig arrays computed once per layer, then only layer i is updated
+    per candidate, avoiding redundant trig for all N layers.
     """
     layers = lam.size
     best_lam = lam.copy()
     half_pi = np.float32(np.pi / 2.0)
 
     for i in range(layers):
-        # Stage 1: coarse grid (k=1, 3, 5, ...)
-        best_k = 1
-        best_lam[i] = -half_pi + delta
-        lp = _get_lp_numba(best_lam, Z2, Z3, invN, N2, N3)
-        s = np.float32(0.0)
-        for j in range(12):
-            d = lp[j] - lp_t[j]; s += d * d
-        best_loss = np.sqrt(s)
-        lam[i] = best_lam[i]
+        cos2, sin2, cos4, sin4 = _trig_from_lam(best_lam)
 
-        for k in range(3, ang_steps + 1, 2):
-            best_lam[i] = -half_pi + np.float32(delta * k)
-            lp = _get_lp_numba(best_lam, Z2, Z3, invN, N2, N3)
-            s = np.float32(0.0)
-            for j in range(12):
-                d = lp[j] - lp_t[j]; s += d * d
-            loss = np.sqrt(s)
+        # Stage 1: coarse grid (k=1, 3, 5, ...)
+        ang = -half_pi + delta
+        _eval_angle(cos2, sin2, cos4, sin4, i, ang,
+                     Z2, Z3, invN, N2, N3, lp_t)
+        best_loss = np.float32(np.inf)
+        best_k = 1
+
+        for k in range(1, ang_steps + 1, 2):
+            ang = -half_pi + np.float32(delta * k)
+            oc2 = cos2[i]; os2 = sin2[i]; oc4 = cos4[i]; os4 = sin4[i]
+            loss = _eval_angle(cos2, sin2, cos4, sin4, i, ang,
+                               Z2, Z3, invN, N2, N3, lp_t)
+            cos2[i] = oc2; sin2[i] = os2; cos4[i] = oc4; sin4[i] = os4
             if loss < best_loss:
-                best_loss = loss
-                best_k = k
-                lam[i] = best_lam[i]
+                _eval_angle(cos2, sin2, cos4, sin4, i, ang,
+                            Z2, Z3, invN, N2, N3, lp_t)
+                best_loss = loss; best_k = k
+                best_lam[i] = ang; lam[i] = ang
 
         # Stage 2: refine neighbours of best_k (even indices)
         for offset in (-1, 1):
             k = best_k + offset
             if 1 <= k <= ang_steps and k % 2 == 0:
-                best_lam[i] = -half_pi + np.float32(delta * k)
-                lp = _get_lp_numba(best_lam, Z2, Z3, invN, N2, N3)
-                s = np.float32(0.0)
-                for j in range(12):
-                    d = lp[j] - lp_t[j]; s += d * d
-                loss = np.sqrt(s)
+                ang = -half_pi + np.float32(delta * k)
+                oc2 = cos2[i]; os2 = sin2[i]; oc4 = cos4[i]; os4 = sin4[i]
+                loss = _eval_angle(cos2, sin2, cos4, sin4, i, ang,
+                                   Z2, Z3, invN, N2, N3, lp_t)
+                cos2[i] = oc2; sin2[i] = os2; cos4[i] = oc4; sin4[i] = os4
                 if loss < best_loss:
+                    _eval_angle(cos2, sin2, cos4, sin4, i, ang,
+                                Z2, Z3, invN, N2, N3, lp_t)
                     best_loss = loss
-                    lam[i] = best_lam[i]
+                    best_lam[i] = ang; lam[i] = ang
 
         best_lam[i] = lam[i]
 

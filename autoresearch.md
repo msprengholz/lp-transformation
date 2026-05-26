@@ -29,9 +29,10 @@ This verifies:
 
 ## Baseline
 
-| Commit | Solver | solve_time (30 starts × 3 reps) | best_rmse |
-|--------|--------|----------------------------------|-----------|
-| (current) | numpy (opt) | (to be measured) | (to be measured) |
+| Commit | Solver | solve_time | best_rmse | Speedup |
+|--------|--------|-----------|-----------|---------|
+| 050e1b8 | **numba JIT** | **0.186 s** | 3.3e-8 | **69×** |
+| a31d618 | numpy (opt) | 12.88 s | 3.2e-8 | 1× |
 
 ## Files in scope
 
@@ -59,17 +60,27 @@ This verifies:
 
 ## What has been tried
 
-*(appended by the agent as experiments run)*
+### Run 1-2: Optimized numpy baseline
+- Cached Z2/Z3 arrays (lru_cache)
+- Combined LP+gradient trig pass
+- Gradient-norm early stopping in iRprop
+- `solve_time = 12.88s` on Colab T4
+
+### Run 3: Numba JIT solver  ✅  **69× speedup**
+- JIT-compiled `get_lp`, `get_lp_and_grad`, `ssearch`, `iRpropm`
+- All loop-heavy functions rewritten with explicit loops for numba compat
+- Falls back to numpy when numba unavailable
+- `solve_time = 0.186s` (69× faster), accuracy preserved (best_rmse 3.3e-8)
+- Confidence: 106.8× noise floor
 
 ## Ideas to explore
 
 - [done] Cached Z2/Z3 arrays (lru_cache)
 - [done] Combined LP+gradient trig pass
 - [done] Gradient-norm early stopping in iRprop
-- Numba JIT: `@jit(nopython=True)` on `get_lp`, `get_loss_grad`, `ssearch`
+- [done] Numba JIT: @jit(nopython=True) on get_lp, get_loss_grad, ssearch, iRpropm
 - SlangPy compute shader for batch iRprop across many starts
-- Multi-start vectorisation: run all random starts in one batch
+- Multi-start vectorisation: run all random starts in one batch (prange)
 - Reduce coarse-to-fine search rounds (currently 3)
 - Adaptive delta in ssearch: start coarse, refine adaptively
-- Use `np.einsum` for faster dot products in get_lp
-- Precompute trig for all possible angles in ssearch grid
+- Precompute trig for all possible angles in ssearch grid (numba)

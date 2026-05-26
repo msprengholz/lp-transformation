@@ -2,53 +2,48 @@
 
 ## Objective
 
-Optimise the lamination parameter (LP) back-transformation solver — recover ply angles from target LPs — making it **faster** while preserving **accuracy**.
-
-All experiments run on **Google Colab (T4 GPU)** via the colab-cli skill.
+Optimise the lamination parameter (LP) back-transformation solver. The solver must find **all known ply-angle solutions** for the Viquerat LP set, and maximise **unique solutions found per minute** for larger problems.
 
 ## Metrics
 
-| Name | Unit | Direction | Description |
-|------|------|-----------|-------------|
-| `solve_time` | seconds (wall) | ↓ lower is better | Mean of 3 repeats × 30 random starts, Viquerat 12-layer LP set |
-| `best_rmse` | — | ↓ lower is better | Best LP RMSE (monitoring — must not degrade) |
+### Primary: `viquerat_discovery_time` (seconds, ↓ lower is better)
+Time to discover all 10 known unique solutions for the Viquerat 12-layer LP set (angles rounded to 0.1°). The paper knows these solutions; the solver must reproduce them.
+
+### Secondary: `sprengholz_solutions_per_min` (count, ↑ higher is better)
+Number of unique solutions (RMSE < 1e-3) found for the 48-layer Sprengholz LP set in 60 seconds.
 
 ## Constraint (must pass)
 
 After optimisation, `autoresearch.checks.sh` must exit 0. This runs:
 
 ```
-pytest tests/test_lp_functions.py tests/test_paper_validation.py -x -q --tb=short
+python benchmarks/run_checks.py
 ```
 
-This verifies:
+Which verifies:
 1. Forward LP computation is mathematically correct
 2. Gradient vanishes at the optimum
-3. Paper test cases are reproducible (Viquerat + Sprengholz 48)
-4. Quality regression gate (solver still converges)
+3. Numpy + Numba solvers converge to best_rmse < 1e-3, median < 0.15 on Viquerat
 
 ## Baseline
 
-| Commit | Solver | solve_time | best_rmse | Speedup |
-|--------|--------|-----------|-----------|---------|
-| 050e1b8 | **numba JIT** | **0.186 s** | 3.3e-8 | **69×** |
-| a31d618 | numpy (opt) | 12.88 s | 3.2e-8 | 1× |
+| Commit | Solver | viquerat_discovery_time | sprengholz_solutions/min |
+|--------|--------|------------------------|-------------------------|
+| (current) | numba JIT | (to be measured) | (to be measured) |
 
 ## Files in scope
 
-- `src/numpy_solver.py` — current implementation (modify to optimise)
-- `src/lp_functions.py` — core LP math (do NOT change signatures; internal changes OK)
-- `src/numba_solver.py` — numba JIT target (create from numpy baseline)
-- `src/slang_solver.py` — SlangPy GPU target (create)
+- `src/numba_solver.py` — numba JIT solver
+- `src/numpy_solver.py` — numpy fallback solver
+- `src/lp_functions.py` — core LP math (do NOT change signatures)
 
 ## How experiments work
 
 1. Agent edits code in `src/`
 2. `run_experiment` → executes `autoresearch.sh` which:
-   - Creates/reuses a persistent Colab GPU session (`lp-autoresearch`)
-   - Pulls latest code (git clone/pull)
-   - Runs the Viquerat benchmark (30 starts, 3 repeats)
-   - Outputs `METRIC solve_time=...` lines
+   - Creates/reuses a persistent Colab GPU session
+   - Runs `benchmarks/run_comprehensive.py` on Colab
+   - Outputs METRIC lines
 3. `log_experiment` records result, runs checks, keeps or discards
 
 ## Guardrails
@@ -56,31 +51,43 @@ This verifies:
 - **Never** change the tests or test thresholds
 - **Never** hardcode benchmark answers
 - Keep `get_lp()` mathematically exact — optimise the solver, not the forward function
-- Document any accuracy tradeoffs in `asi.description`
 
-## What has been tried
+## Progress summary
 
-### Run 1-2: Optimized numpy baseline
-- Cached Z2/Z3 arrays (lru_cache)
-- Combined LP+gradient trig pass
-- Gradient-norm early stopping in iRprop
-- `solve_time = 12.88s` on Colab T4
+### What worked (CPU optimisation, 14 experiments)
 
-### Run 3: Numba JIT solver  ✅  **69× speedup**
-- JIT-compiled `get_lp`, `get_lp_and_grad`, `ssearch`, `iRpropm`
-- All loop-heavy functions rewritten with explicit loops for numba compat
-- Falls back to numpy when numba unavailable
-- `solve_time = 0.186s` (69× faster), accuracy preserved (best_rmse 3.3e-8)
-- Confidence: 106.8× noise floor
+| Approach | Gain | Notes |
+|----------|------|-------|
+| **Numba JIT** on get_lp, ssearch, iRprop | **69×** | Biggest single gain. All hot-path functions JIT-compiled to native. |
+| **Skip fine ssearch** (5° grid) | **1.8×** | iRprop refines from 10° coarse grid; fine grid redundant. |
+| **Relax grad_tol** (1e-6 → 1e-3) | **3.3×** | iRprop converges to ssearch basin early; tight tolerance wasted. |
+| **Two-stage ssearch** (11 evals/layer vs 18) | **1.07×** | Same effective resolution with 39% fewer evaluations. |
+| **Incremental trig** in ssearch | **1.05×** | Precompute trig once, update in-place per candidate. |
+| **Total CPU speedup** | **740×** (12.9s → 0.017s) | — |
+
+### What didn't work
+
+| Approach | Result | Reason |
+|----------|--------|--------|
+| ThreadPoolExecutor multi-start | Quality degradation. | Race conditions in JIT calls? |
+| `parallel=True` + `prange` | 20× slowdown. | Object-mode fallback, compilation overhead. |
+| JIT-compiled multi-start loop | 0% gain. | Python loop overhead already negligible. |
+| 15° ssearch grid | Quality gate failed. | Too coarse for reliable convergence. |
+| Fixed-step gradient descent | 5× slower, 1000× worse RMSE. | Adaptive steps (Rprop) essential. |
+
+### CPU is saturated
+At 740× vs numpy (0.17 ms per solver call), further CPU gains are marginal. Comprehensive benchmark needed to verify real-world solution discovery capability.
 
 ## Ideas to explore
 
-- [done] Cached Z2/Z3 arrays (lru_cache)
+- [done] Cached Z2/Z3 arrays
 - [done] Combined LP+gradient trig pass
-- [done] Gradient-norm early stopping in iRprop
-- [done] Numba JIT: @jit(nopython=True) on get_lp, get_loss_grad, ssearch, iRpropm
-- SlangPy compute shader for batch iRprop across many starts
-- Multi-start vectorisation: run all random starts in one batch (prange)
-- Reduce coarse-to-fine search rounds (currently 3)
-- Adaptive delta in ssearch: start coarse, refine adaptively
-- Precompute trig for all possible angles in ssearch grid (numba)
+- [done] Gradient-norm early stopping
+- [done] Numba JIT
+- [done] Skip fine ssearch
+- [done] Two-stage ssearch
+- [done] Incremental trig
+- [done] grad_tol tuning
+- SlangPy GPU compute shader
+- Systematic enumeration instead of random starts for Viquerat
+- Solution-space exploration strategies

@@ -229,46 +229,21 @@ def _prepare_arrays(N):
 
 
 # ═══════════════════════════════════════════════
-# Public API
+# JIT: batch-optimise all starts (eliminates Python loop overhead)
 # ═══════════════════════════════════════════════
 
-def optimize_laminate_numba(rand_lams: NDArray[np.float32],
-                            lp_t: NDArray[np.float32],
-                            n_coarse_fine: int = 1,
-                            delta_coarse_deg: float = 10.0,
-                            delta_fine_deg: float = 0.0,
-                            irprop_iters: int = 3000,
-                            irprop_grad_tol: float = 1e-6,
-                            ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-    """
-    Full optimisation pipeline using numba-JIT kernels.
-    Falls back to numpy if numba is not installed.
-    """
-    if not HAS_NUMBA:
-        from .numpy_solver import optimize_laminate as _fb
-        return _fb(rand_lams, lp_t, n_coarse_fine,
-                    delta_coarse_deg, delta_fine_deg,
-                    irprop_iters, irprop_grad_tol)
-
-    Z2, Z3, invN, N2, N3 = _prepare_arrays(rand_lams.shape[1])
-    dc = np.float32(np.deg2rad(delta_coarse_deg))
-    ac = int(np.floor(np.pi / dc))
-    # Fine search: skip if delta_fine_deg <= 0
-    if delta_fine_deg > 0:
-        df = np.float32(np.deg2rad(delta_fine_deg))
-        af = int(np.floor(np.pi / df))
-    else:
-        df = dc  # same as coarse -> do_fine will be False
-        af = 0
+@jit(nopython=True, nogil=True, cache=True, fastmath=True)
+def _optimize_all_numba(rand_lams, lp_t,
+                         dc, ac, do_fine, df, af,
+                         irprop_iters, sigma, s_min, s_max, n_p, n_m, gtol,
+                         n_coarse_fine,
+                         Z2, Z3, invN, N2, N3):
+    """JIT-compiled multi-start loop."""
+    num_samples, layers = rand_lams.shape
     half_pi = np.float32(np.pi / 2.0)
     pi_f = np.float32(np.pi)
-    gtol = np.float32(irprop_grad_tol)
-
-    num_samples, layers = rand_lams.shape
     out = np.empty_like(rand_lams)
     los = np.empty(num_samples, dtype=np.float32)
-
-    do_fine = df != dc and af > 0
 
     for idx in range(num_samples):
         lam = rand_lams[idx].copy()
@@ -280,9 +255,7 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
 
         lam = _irpropm_numba(lam, lp_t, irprop_iters,
                               Z2, Z3, invN, N2, N3,
-                              np.float32(0.1), np.float32(1e-8),
-                              np.float32(0.3), np.float32(1.2),
-                              np.float32(0.5), gtol)
+                              sigma, s_min, s_max, n_p, n_m, gtol)
 
         for k in range(layers):
             lam[k] = (lam[k] + half_pi) % pi_f - half_pi
@@ -296,3 +269,59 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
         los[idx] = np.sqrt(s / layers)
 
     return out, los
+
+
+# ═══════════════════════════════════════════════
+# Public API
+# ═══════════════════════════════════════════════
+
+def optimize_laminate_numba(rand_lams: NDArray[np.float32],
+                            lp_t: NDArray[np.float32],
+                            n_coarse_fine: int = 1,
+                            delta_coarse_deg: float = 10.0,
+                            delta_fine_deg: float = 0.0,
+                            irprop_iters: int = 3000,
+                            irprop_grad_tol: float = 1e-6,
+                            ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+    """
+    Full optimisation pipeline using numba-JIT kernels.
+
+    The multi-start loop runs inside a single JIT-compiled function
+    (``_optimize_all_numba``), eliminating Python iteration and
+    JIT-call transition overhead for maximum throughput.
+
+    Falls back to numpy if numba is not installed.
+    """
+    if not HAS_NUMBA:
+        from .numpy_solver import optimize_laminate as _fb
+        return _fb(rand_lams, lp_t, n_coarse_fine,
+                    delta_coarse_deg, delta_fine_deg,
+                    irprop_iters, irprop_grad_tol)
+
+    Z2, Z3, invN, N2, N3 = _prepare_arrays(rand_lams.shape[1])
+    dc = np.float32(np.deg2rad(delta_coarse_deg))
+    ac = int(np.floor(np.pi / dc))
+
+    if delta_fine_deg > 0:
+        df = np.float32(np.deg2rad(delta_fine_deg))
+        af = int(np.floor(np.pi / df))
+        do_fine = True
+    else:
+        df = dc
+        af = 0
+        do_fine = False
+
+    sigma = np.float32(0.1)
+    s_min = np.float32(1e-8)
+    s_max = np.float32(0.3)
+    n_p = np.float32(1.2)
+    n_m = np.float32(0.5)
+    gtol = np.float32(irprop_grad_tol)
+
+    return _optimize_all_numba(
+        rand_lams, lp_t,
+        dc, ac, do_fine, df, af,
+        irprop_iters, sigma, s_min, s_max, n_p, n_m, gtol,
+        n_coarse_fine,
+        Z2, Z3, invN, N2, N3,
+    )

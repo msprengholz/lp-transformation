@@ -165,23 +165,57 @@ def _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3):
 
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _ssearch_numba(lam, lp_t, delta, ang_steps, Z2, Z3, invN, N2, N3):
+    """
+    Sequential search with two-stage evaluation.
+
+    Stage 1: evaluate every other angle (coarse grid at 2*delta).
+    Stage 2: evaluate neighbours of the best coarse angle.
+
+    ~11 evaluations per layer vs 18, same effective resolution.
+    """
     layers = lam.size
     best_lam = lam.copy()
     half_pi = np.float32(np.pi / 2.0)
+
     for i in range(layers):
-        best_loss = np.float32(np.inf)
-        for k in range(1, ang_steps + 1):
+        # Stage 1: coarse grid (k=1, 3, 5, ...)
+        best_k = 1
+        best_lam[i] = -half_pi + delta
+        lp = _get_lp_numba(best_lam, Z2, Z3, invN, N2, N3)
+        s = np.float32(0.0)
+        for j in range(12):
+            d = lp[j] - lp_t[j]; s += d * d
+        best_loss = np.sqrt(s)
+        lam[i] = best_lam[i]
+
+        for k in range(3, ang_steps + 1, 2):
             best_lam[i] = -half_pi + np.float32(delta * k)
             lp = _get_lp_numba(best_lam, Z2, Z3, invN, N2, N3)
-            loss = np.float32(0.0)
+            s = np.float32(0.0)
             for j in range(12):
-                d = lp[j] - lp_t[j]
-                loss += d * d
-            loss = np.sqrt(loss)
+                d = lp[j] - lp_t[j]; s += d * d
+            loss = np.sqrt(s)
             if loss < best_loss:
-                lam[i] = best_lam[i]
                 best_loss = loss
+                best_k = k
+                lam[i] = best_lam[i]
+
+        # Stage 2: refine neighbours of best_k (even indices)
+        for offset in (-1, 1):
+            k = best_k + offset
+            if 1 <= k <= ang_steps and k % 2 == 0:
+                best_lam[i] = -half_pi + np.float32(delta * k)
+                lp = _get_lp_numba(best_lam, Z2, Z3, invN, N2, N3)
+                s = np.float32(0.0)
+                for j in range(12):
+                    d = lp[j] - lp_t[j]; s += d * d
+                loss = np.sqrt(s)
+                if loss < best_loss:
+                    best_loss = loss
+                    lam[i] = best_lam[i]
+
         best_lam[i] = lam[i]
+
     return best_lam
 
 

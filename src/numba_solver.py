@@ -273,6 +273,23 @@ def _ssearch_numba(lam, lp_t, delta, ang_steps, Z2, Z3, invN, N2, N3):
                 best_lam[i] = grid_angles[k]
                 lam[i] = grid_angles[k]
 
+        # Stage 2: refine neighbours (even indices -> odd 0-indexed)
+        for offset in (-1, 1):
+            k = best_k + offset
+            if 0 <= k < ang_steps and k % 2 == 1:
+                oc2 = cos2[i]; os2 = sin2[i]; oc4 = cos4[i]; os4 = sin4[i]
+                loss = _eval_angle_from_table(cos2, sin2, cos4, sin4, i, k,
+                                               t_c2, t_s2, t_c4, t_s4,
+                                               Z2, Z3, invN, N2, N3, lp_t)
+                cos2[i] = oc2; sin2[i] = os2; cos4[i] = oc4; sin4[i] = os4
+                if loss < best_loss:
+                    _eval_angle_from_table(cos2, sin2, cos4, sin4, i, k,
+                                            t_c2, t_s2, t_c4, t_s4,
+                                            Z2, Z3, invN, N2, N3, lp_t)
+                    best_loss = loss
+                    best_lam[i] = grid_angles[k]
+                    lam[i] = grid_angles[k]
+
         best_lam[i] = lam[i]
 
     return best_lam

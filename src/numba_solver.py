@@ -7,6 +7,7 @@ Falls back to numpy if numba is not installed.
 
 import numpy as np
 from numpy.typing import NDArray
+from functools import lru_cache
 
 try:
     from numba import jit
@@ -217,6 +218,7 @@ def _irpropm_numba(lam, lp_t, it_iRprop, Z2, Z3, invN, N2, N3,
 # Helpers
 # ═══════════════════════════════════════════════
 
+@lru_cache(maxsize=8)
 def _prepare_arrays(N):
     k = np.arange(N, dtype=np.float32)
     Z2 = ((-N / 2 + k + 1) ** 2 - (-N / 2 + k) ** 2).astype(np.float32)
@@ -278,7 +280,7 @@ def _optimize_all_numba(rand_lams, lp_t,
 def optimize_laminate_numba(rand_lams: NDArray[np.float32],
                             lp_t: NDArray[np.float32],
                             n_coarse_fine: int = 1,
-                            delta_coarse_deg: float = 15.0,
+                            delta_coarse_deg: float = 10.0,
                             delta_fine_deg: float = 0.0,
                             irprop_iters: int = 3000,
                             irprop_grad_tol: float = 1e-4,

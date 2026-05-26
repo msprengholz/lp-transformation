@@ -30,8 +30,8 @@ for M in batch_sizes:
     # GPU (SlangPy) — only if available
     try:
         import slangpy as sl
-        dev = sl.create_device()
-
+        dev = sl.create_device(type=sl.DeviceType.cuda)
+        print("  GPU: device=", dev.info.adapter_name, file=sys.stderr)
         # Build shader
         mod = sl.Module.load_from_source(dev, "lp_bench", """
         [AutoPy]

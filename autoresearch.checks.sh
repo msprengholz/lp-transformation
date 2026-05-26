@@ -7,5 +7,5 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 python colab/colab_exec.py --cmd \
-  "cd /content/lp-transformation && python3 -m pytest tests/test_lp_functions.py tests/test_paper_validation.py -x -q --tb=short 2>&1" \
+  "cd /content/lp-transformation && pip install -q numba >/dev/null 2>&1 && python benchmarks/run_checks.py 2>&1" \
   --timeout 600

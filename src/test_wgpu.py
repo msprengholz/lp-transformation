@@ -9,7 +9,7 @@ from wgpu.utils import get_default_device
 
 device = get_default_device()
 print("device:", type(device).__name__, flush=True)
-print("adapter:", device.adapter_info_summary, flush=True)
+print("adapter:", device.adapter.info.description if hasattr(device, "adapter") else "unknown", flush=True)
 
 # WGSL compute shader
 shader_source = """

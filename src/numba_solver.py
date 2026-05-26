@@ -236,7 +236,7 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
                             lp_t: NDArray[np.float32],
                             n_coarse_fine: int = 1,
                             delta_coarse_deg: float = 10.0,
-                            delta_fine_deg: float = 5.0,
+                            delta_fine_deg: float = 0.0,
                             irprop_iters: int = 3000,
                             irprop_grad_tol: float = 1e-6,
                             ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
@@ -263,12 +263,15 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
     out = np.empty_like(rand_lams)
     los = np.empty(num_samples, dtype=np.float32)
 
+    do_fine = df != dc and af > 0
+
     for idx in range(num_samples):
         lam = rand_lams[idx].copy()
 
         for _ in range(n_coarse_fine):
             lam = _ssearch_numba(lam, lp_t, dc, ac, Z2, Z3, invN, N2, N3)
-            lam = _ssearch_numba(lam, lp_t, df, af, Z2, Z3, invN, N2, N3)
+            if do_fine:
+                lam = _ssearch_numba(lam, lp_t, df, af, Z2, Z3, invN, N2, N3)
 
         lam = _irpropm_numba(lam, lp_t, irprop_iters,
                               Z2, Z3, invN, N2, N3,

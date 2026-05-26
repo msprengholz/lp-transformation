@@ -4,38 +4,58 @@
 
 Optimise the lamination parameter (LP) back-transformation solver — recover ply angles from target LPs — making it **faster** while preserving **accuracy**.
 
-## Metric
+All experiments run on **Google Colab (T4 GPU)** via the colab-cli skill.
 
-- **Name:** `solve_time`
-- **Unit:** seconds (wall-clock)
-- **Direction:** lower is better
-- **Measurement:** `python -m benchmarks.benchmark_runner --solver numpy --n-layers 12 --samples 3 --n-starts 10`
+## Metrics
+
+| Name | Unit | Direction | Description |
+|------|------|-----------|-------------|
+| `solve_time` | seconds (wall) | ↓ lower is better | Mean of 3 repeats × 30 random starts, Viquerat 12-layer LP set |
+| `best_rmse` | — | ↓ lower is better | Best LP RMSE (monitoring — must not degrade) |
 
 ## Constraint (must pass)
 
-After optimisation, the solver must still pass:
+After optimisation, `autoresearch.checks.sh` must exit 0. This runs:
 
 ```
-pytest tests/ -x -q --tb=short -m "not slow"
+pytest tests/test_lp_functions.py tests/test_paper_validation.py -x -q --tb=short
 ```
 
 This verifies:
-1. `test_lp_functions.py` — forward LP computation is mathematically correct
-2. `test_solver_numpy.py` — solver self-consistency (can recover known laminates)
-3. `test_accuracy.py` — per-angle deviation < thresholds scaled by layer count
+1. Forward LP computation is mathematically correct
+2. Gradient vanishes at the optimum
+3. Paper test cases are reproducible (Viquerat + Sprengholz 48)
+4. Quality regression gate (solver still converges)
 
 ## Baseline
 
-| Solver | N=12 mean time (3 runs) |
-|--------|------------------------|
-| numpy  | (to be measured)       |
+| Commit | Solver | solve_time (30 starts × 3 reps) | best_rmse |
+|--------|--------|----------------------------------|-----------|
+| (current) | numpy (opt) | (to be measured) | (to be measured) |
 
 ## Files in scope
 
-- `src/numpy_solver.py` — current implementation
-- `src/lp_functions.py` — core LP math (do not change the forward `get_lp` signature)
-- `src/numba_solver.py` — numba target (create)
+- `src/numpy_solver.py` — current implementation (modify to optimise)
+- `src/lp_functions.py` — core LP math (do NOT change signatures; internal changes OK)
+- `src/numba_solver.py` — numba JIT target (create from numpy baseline)
 - `src/slang_solver.py` — SlangPy GPU target (create)
+
+## How experiments work
+
+1. Agent edits code in `src/`
+2. `run_experiment` → executes `autoresearch.sh` which:
+   - Creates/reuses a persistent Colab GPU session (`lp-autoresearch`)
+   - Pulls latest code (git clone/pull)
+   - Runs the Viquerat benchmark (30 starts, 3 repeats)
+   - Outputs `METRIC solve_time=...` lines
+3. `log_experiment` records result, runs checks, keeps or discards
+
+## Guardrails
+
+- **Never** change the tests or test thresholds
+- **Never** hardcode benchmark answers
+- Keep `get_lp()` mathematically exact — optimise the solver, not the forward function
+- Document any accuracy tradeoffs in `asi.description`
 
 ## What has been tried
 
@@ -43,8 +63,13 @@ This verifies:
 
 ## Ideas to explore
 
-- Numba JIT compilation of hot loops (`get_lp`, `get_loss_grad`, `ssearch`)
-- Vectorisation beyond current numpy
-- SlangPy compute shader for parallel batch optimisation
-- Reduce iRprop iterations with adaptive convergence
-- Multi-start parallelisation
+- [done] Cached Z2/Z3 arrays (lru_cache)
+- [done] Combined LP+gradient trig pass
+- [done] Gradient-norm early stopping in iRprop
+- Numba JIT: `@jit(nopython=True)` on `get_lp`, `get_loss_grad`, `ssearch`
+- SlangPy compute shader for batch iRprop across many starts
+- Multi-start vectorisation: run all random starts in one batch
+- Reduce coarse-to-fine search rounds (currently 3)
+- Adaptive delta in ssearch: start coarse, refine adaptively
+- Use `np.einsum` for faster dot products in get_lp
+- Precompute trig for all possible angles in ssearch grid

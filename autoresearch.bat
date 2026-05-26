@@ -1,6 +1,6 @@
 @echo off
-REM Windows batch wrapper for autoresearch.
-REM Calls the Colab benchmark directly via Python, avoiding WSL bash issues.
+REM Run the LP solver benchmark on Google Colab GPU via uv.
+REM Called by run_experiment in the autoresearch loop.
 
 cd /d "%~dp0"
-python colab\colab_exec.py --cmd "cd /content/lp-transformation && python benchmarks/run_benchmark.py" --timeout 600
+uv run colab\colab_exec.py --cmd "cd /content/lp-transformation && python benchmarks/run_benchmark.py" --timeout 600

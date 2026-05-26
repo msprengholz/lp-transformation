@@ -203,13 +203,33 @@ def _lp_from_trig(cos2, sin2, cos4, sin4, Z2, Z3, invN, N2, N3):
 
 
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
-def _eval_angle(cos2, sin2, cos4, sin4, i, angle,
-                Z2, Z3, invN, N2, N3, lp_t):
-    """Set trig for layer i, compute LP RMSE loss."""
-    cos2[i] = np.cos(angle * 2)
-    sin2[i] = np.sin(angle * 2)
-    cos4[i] = np.cos(angle * 4)
-    sin4[i] = np.sin(angle * 4)
+def _build_trig_table(ang_steps, delta):
+    """Precompute trig for all grid angles. Returns 5 arrays: angles, c2, s2, c4, s4."""
+    half_pi = np.float32(np.pi / 2.0)
+    angles = np.empty(ang_steps, dtype=np.float32)
+    c2 = np.empty(ang_steps, dtype=np.float32)
+    s2 = np.empty(ang_steps, dtype=np.float32)
+    c4 = np.empty(ang_steps, dtype=np.float32)
+    s4 = np.empty(ang_steps, dtype=np.float32)
+    for k in range(1, ang_steps + 1):
+        a = -half_pi + np.float32(delta * k)
+        angles[k-1] = a
+        c2[k-1] = np.cos(a * 2)
+        s2[k-1] = np.sin(a * 2)
+        c4[k-1] = np.cos(a * 4)
+        s4[k-1] = np.sin(a * 4)
+    return angles, c2, s2, c4, s4
+
+
+@jit(nopython=True, nogil=True, cache=True, fastmath=True)
+def _eval_angle_from_table(cos2, sin2, cos4, sin4, i, k,
+                           t_c2, t_s2, t_c4, t_s4,
+                           Z2, Z3, invN, N2, N3, lp_t):
+    """Set trig for layer i from table index k, compute LP RMSE loss."""
+    cos2[i] = t_c2[k]
+    sin2[i] = t_s2[k]
+    cos4[i] = t_c4[k]
+    sin4[i] = t_s4[k]
     lp = _lp_from_trig(cos2, sin2, cos4, sin4, Z2, Z3, invN, N2, N3)
     s = np.float32(0.0)
     for j in range(12):
@@ -220,51 +240,55 @@ def _eval_angle(cos2, sin2, cos4, sin4, i, angle,
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _ssearch_numba(lam, lp_t, delta, ang_steps, Z2, Z3, invN, N2, N3):
     """
-    Sequential search with incremental trig update.
+    Sequential search with precomputed trig tables.
 
-    Trig arrays computed once per layer, then only layer i is updated
-    per candidate, avoiding redundant trig for all N layers.
+    Trig for all grid angles precomputed once. Ssearch uses table lookups
+    instead of cos/sin calls — zero trig computation per candidate.
     """
     layers = lam.size
     best_lam = lam.copy()
-    half_pi = np.float32(np.pi / 2.0)
+
+    # Precompute trig tables for all grid angles
+    grid_angles, t_c2, t_s2, t_c4, t_s4 = _build_trig_table(ang_steps, delta)
+    # Convert to 0-indexed: idx = k-1
 
     for i in range(layers):
         cos2, sin2, cos4, sin4 = _trig_from_lam(best_lam)
 
-        # Stage 1: coarse grid (k=1, 3, 5, ...)
-        ang = -half_pi + delta
-        _eval_angle(cos2, sin2, cos4, sin4, i, ang,
-                     Z2, Z3, invN, N2, N3, lp_t)
+        # Stage 1: coarse grid (odd indices -> 0, 2, 4, ... in 0-indexed)
         best_loss = np.float32(np.inf)
-        best_k = 1
+        best_k = 0  # 0-indexed
 
-        for k in range(1, ang_steps + 1, 2):
-            ang = -half_pi + np.float32(delta * k)
+        for k in range(0, ang_steps, 2):
             oc2 = cos2[i]; os2 = sin2[i]; oc4 = cos4[i]; os4 = sin4[i]
-            loss = _eval_angle(cos2, sin2, cos4, sin4, i, ang,
-                               Z2, Z3, invN, N2, N3, lp_t)
+            loss = _eval_angle_from_table(cos2, sin2, cos4, sin4, i, k,
+                                           t_c2, t_s2, t_c4, t_s4,
+                                           Z2, Z3, invN, N2, N3, lp_t)
             cos2[i] = oc2; sin2[i] = os2; cos4[i] = oc4; sin4[i] = os4
             if loss < best_loss:
-                _eval_angle(cos2, sin2, cos4, sin4, i, ang,
-                            Z2, Z3, invN, N2, N3, lp_t)
+                _eval_angle_from_table(cos2, sin2, cos4, sin4, i, k,
+                                        t_c2, t_s2, t_c4, t_s4,
+                                        Z2, Z3, invN, N2, N3, lp_t)
                 best_loss = loss; best_k = k
-                best_lam[i] = ang; lam[i] = ang
+                best_lam[i] = grid_angles[k]
+                lam[i] = grid_angles[k]
 
-        # Stage 2: refine neighbours of best_k (even indices)
+        # Stage 2: refine neighbours (even indices -> odd 0-indexed)
         for offset in (-1, 1):
             k = best_k + offset
-            if 1 <= k <= ang_steps and k % 2 == 0:
-                ang = -half_pi + np.float32(delta * k)
+            if 0 <= k < ang_steps and k % 2 == 1:
                 oc2 = cos2[i]; os2 = sin2[i]; oc4 = cos4[i]; os4 = sin4[i]
-                loss = _eval_angle(cos2, sin2, cos4, sin4, i, ang,
-                                   Z2, Z3, invN, N2, N3, lp_t)
+                loss = _eval_angle_from_table(cos2, sin2, cos4, sin4, i, k,
+                                               t_c2, t_s2, t_c4, t_s4,
+                                               Z2, Z3, invN, N2, N3, lp_t)
                 cos2[i] = oc2; sin2[i] = os2; cos4[i] = oc4; sin4[i] = os4
                 if loss < best_loss:
-                    _eval_angle(cos2, sin2, cos4, sin4, i, ang,
-                                Z2, Z3, invN, N2, N3, lp_t)
+                    _eval_angle_from_table(cos2, sin2, cos4, sin4, i, k,
+                                            t_c2, t_s2, t_c4, t_s4,
+                                            Z2, Z3, invN, N2, N3, lp_t)
                     best_loss = loss
-                    best_lam[i] = ang; lam[i] = ang
+                    best_lam[i] = grid_angles[k]
+                    lam[i] = grid_angles[k]
 
         best_lam[i] = lam[i]
 

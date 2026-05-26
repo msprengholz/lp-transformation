@@ -14,6 +14,16 @@ get_lp(θ) → ξ = [ξ₁ᴬ, ξ₂ᴬ, ξ₃ᴬ, ξ₄ᴬ, ξ₁ᴮ, ξ₂ᴮ,
 
 The **back-transformation** is the inverse: given target ξ*, find θ such that `get_lp(θ) ≈ ξ*`.
 
+## Reference
+
+This code is based on the method described in:
+
+> Sprengholz et al., **Rapid Transformation of Lamination Parameters into Continuous Stacking Sequences**, *Composite Structures*.
+
+Test cases are taken from:
+- Viquerat (2020), *Composite Structures* 238, 111872.
+- The supplementary material of the paper above.
+
 ## Solver algorithm
 
 | Stage | Method | Purpose |
@@ -26,12 +36,20 @@ The **back-transformation** is the inverse: given target ξ*, find θ such that 
 
 ```
 ├── src/
-│   ├── lp_functions.py      # Core math: get_lp, get_loss_grad, compute_lp_rmse
+│   ├── lp_functions.py      # Core math: get_lp, get_loss_grad, get_lp_jac, compute_lp_rmse
 │   ├── numpy_solver.py      # Numpy-based solver (baseline)
 │   ├── numba_solver.py      # [TBD] Numba-accelerated solver
-│   └── slang_solver.py      # [TBD] SlangPy GPU solver
+│   ├── slang_solver.py      # [TBD] SlangPy GPU solver
+│   ├── test_cases.py        # Paper LP sets (Viquerat, Sprengholz)
+│   └── utils.py             # Shared: seeding, timing, result I/O
+├── data/
+│   ├── viquerat_12_layer_solutions.csv           # Paper solutions (Viquerat set)
+│   ├── viquerat_12_layer_solutions_complete.csv  # All found solutions
+│   ├── optimisation_12_layer_solutions.csv       # Paper solutions (optimisation set)
+│   └── optimisation_48_layer_solutions.csv       # 48-layer paper solutions
 ├── tests/
 │   ├── test_lp_functions.py  # Forward computation correctness
+│   ├── test_paper_validation.py  # MUST-PASS: reproduce paper results
 │   ├── test_solver_numpy.py  # Self-consistency (can we recover known laminates?)
 │   └── test_accuracy.py      # Angle deviation thresholds
 ├── benchmarks/
@@ -49,24 +67,35 @@ The **back-transformation** is the inverse: given target ξ*, find θ such that 
 ```bash
 pip install -r requirements.txt
 
-# Run tests
+# Run tests (including paper validation)
 pytest tests/ -v
+
+# Quick check: reproduce paper results
+python -m pytest tests/test_paper_validation.py -v --tb=short
 
 # Run benchmarks
 python -m benchmarks.benchmark_runner --solver all --samples 5
 
-# Run a single problem
+# Run the Viquerat test case from the paper
 python -c "
-from src.lp_functions import get_lp, make_random_laminate
+from src.test_cases import LP_VIQUERAT
 from src.numpy_solver import optimize_laminate
 import numpy as np
 
-lp_t = np.array([0.2, -0.05, -0.15, -0.1, 0.4, 0.2, 0.4, 0.25, 0.2, 0.2, -0.05, -0.1], dtype=np.float32)
 rand_lams = np.random.uniform(-np.pi/2, np.pi/2, (50, 12)).astype(np.float32)
-opt_lams, losses = optimize_laminate(rand_lams, lp_t)
-print('Best loss:', losses.min())
+opt_lams, losses = optimize_laminate(rand_lams, LP_VIQUERAT)
+print('Viquerat LP set — Best RMSE:', losses.min())
+print('Paper achieves ~2e-8 with DFO-LS refinement')
 "
 ```
+
+## Test cases from the literature
+
+| Test case | Source | Layers | Target RMSE |
+|-----------|--------|--------|-------------|
+| `LP_VIQUERAT` | Viquerat (2020) | 12 | < 1e-4 (paper: ~2e-8) |
+| `LP_OPTIMISATION_12` | Sprengholz et al. | 12 | < 1e-2 (paper: ~8e-3) |
+| `LP_SPRENGHOLZ_48` | Sprengholz et al. | 48 | < 1e-3 |
 
 ## Roadmap
 

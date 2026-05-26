@@ -75,6 +75,7 @@ def get_loss_grad(lam: NDArray[np.float32],
     Gradient of the LP-matching loss w.r.t. each ply angle.
 
     loss = 0.5 * Σ (lp_k(lam) - lp_t_k)²
+    Equivalent to the transpose of the LP Jacobian times the residual.
 
     Parameters
     ----------
@@ -113,7 +114,57 @@ def get_loss_grad(lam: NDArray[np.float32],
     grad += (-2 * sin2 * Z3 * lp_d[8] + 2 * cos2 * Z3 * lp_d[9])
     grad += (-2 * sin4 * Z3 * lp_d[10] + 2 * cos4 * Z3 * lp_d[11])
 
-    return grad * 2
+    return -grad * 2
+
+
+# ──────────────────────────────────────────────
+# Analytic LP Jacobian  (∂ξⱼ / ∂θᵢ)
+# ──────────────────────────────────────────────
+
+def get_lp_jac(lam: NDArray[np.float32]) -> NDArray[np.float32]:
+    """
+    Jacobian of the 12 LP outputs w.r.t. each ply angle.
+
+    Shape (N, 12) where J[i, j] = ∂ξⱼ / ∂θᵢ.
+
+    Reference: Macquart et al. (2017), "Aeroelastic Design of Blended
+    Composite Structures Using Lamination Parameters".
+    """
+    N = lam.size
+    grad = np.zeros((N, 12), dtype=np.float32)
+
+    lam2 = lam * 2
+    lam4 = lam * 4
+    cos2 = np.cos(lam2).astype(np.float32)
+    cos4 = np.cos(lam4).astype(np.float32)
+    sin2 = np.sin(lam2).astype(np.float32)
+    sin4 = np.sin(lam4).astype(np.float32)
+
+    k = np.arange(N, dtype=np.float32)
+    Z2 = ((-N / 2 + k + 1) ** 2 - (-N / 2 + k) ** 2).astype(np.float32)
+    Z3 = ((-N / 2 + k + 1) ** 3 - (-N / 2 + k) ** 3).astype(np.float32)
+
+    # In-plane
+    grad[:, 0] = -sin2 * 2 / N
+    grad[:, 1] = cos2 * 2 / N
+    grad[:, 2] = -sin4 * 4 / N
+    grad[:, 3] = cos4 * 4 / N
+
+    # Coupling
+    N2 = 2 / (N ** 2)
+    grad[:, 4] = -sin2 * 2 * Z2 * N2
+    grad[:, 5] = cos2 * 2 * Z2 * N2
+    grad[:, 6] = -sin4 * 4 * Z2 * N2
+    grad[:, 7] = cos4 * 4 * Z2 * N2
+
+    # Out-of-plane
+    N3 = 4 / (N ** 3)
+    grad[:, 8] = -sin2 * 2 * Z3 * N3
+    grad[:, 9] = cos2 * 2 * Z3 * N3
+    grad[:, 10] = -sin4 * 4 * Z3 * N3
+    grad[:, 11] = cos4 * 4 * Z3 * N3
+
+    return grad
 
 
 # ──────────────────────────────────────────────
@@ -167,3 +218,26 @@ def make_target_lp_from_laminate(lam: NDArray[np.float32]) -> NDArray[np.float32
 def wrap_angles(lam: NDArray[np.float32]) -> NDArray[np.float32]:
     """Wrap angles into [-π/2, π/2]."""
     return (lam + np.pi / 2) % np.pi - np.pi / 2
+
+
+# ──────────────────────────────────────────────
+# Batch LP computation (vectorised over many laminates)
+# ──────────────────────────────────────────────
+
+def calc_lp_array(lams: NDArray[np.float32]) -> NDArray[np.float32]:
+    """
+    Compute LP for multiple laminates at once.
+
+    Parameters
+    ----------
+    lams : (M, N) float32 — M laminates, N layers each
+
+    Returns
+    -------
+    lps : (M, 12) float32 — LP vectors
+    """
+    M = lams.shape[0]
+    out = np.zeros((M, 12), dtype=np.float32)
+    for i in range(M):
+        out[i] = get_lp(lams[i])
+    return out

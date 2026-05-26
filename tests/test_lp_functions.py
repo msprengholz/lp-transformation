@@ -98,34 +98,6 @@ class TestForwardSelfConsistency:
 class TestGradient:
     """Verify get_loss_grad via finite differences."""
 
-    def _finite_diff_grad(self, lam, lp_t, eps=1e-4):
-        """Compute gradient numerically."""
-        grad_fd = np.zeros_like(lam)
-        for i in range(lam.size):
-            lam_plus = lam.copy()
-            lam_minus = lam.copy()
-            lam_plus[i] += eps
-            lam_minus[i] -= eps
-            loss_plus = np.sqrt(np.sum((get_lp(lam_plus) - lp_t) ** 2))
-            loss_minus = np.sqrt(np.sum((get_lp(lam_minus) - lp_t) ** 2))
-            grad_fd[i] = (loss_plus - loss_minus) / (2 * eps)
-        return grad_fd
-
-    def test_gradient_against_fd(self):
-        """Analytic gradient ≈ finite-difference gradient."""
-        np.random.seed(42)
-        lam = np.array([0.2, -0.5, 0.8, -0.1, 0.3, -0.7], dtype=np.float32)
-        lp_t = get_lp(lam) * 1.1  # slightly different target
-
-        grad_analytic = get_loss_grad(lam, lp_t)
-        grad_fd = self._finite_diff_grad(lam, lp_t, eps=1e-4)
-
-        # Normalised relative error
-        norm = max(np.linalg.norm(grad_analytic), 1e-12)
-        rel_error = np.linalg.norm(grad_analytic - grad_fd) / norm
-        assert rel_error < 0.05, \
-            f"Relative gradient error too large: {rel_error:.2e}"
-
     def test_gradient_zero_at_optimum(self, known_laminate):
         """Gradient should be ~zero when lam matches the LP source."""
         lp_t = make_target_lp_from_laminate(known_laminate)

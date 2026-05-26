@@ -12,12 +12,12 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24.0",
 ]
-optional-dependencies = {
-    dev = ["pytest>=7.4.0", "pytest-benchmark>=4.0.0"],
-    numba = ["numba>=0.58.0"],
-    slang = ["slangpy>=0.15.0"],
-    all = ["numba>=0.58.0", "slangpy>=0.15.0"],
-}
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4.0", "pytest-benchmark>=4.0.0"]
+numba = ["numba>=0.58.0"]
+slang = ["slangpy>=0.15.0"]
+all = ["numba>=0.58.0", "slangpy>=0.15.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

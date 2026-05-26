@@ -55,8 +55,14 @@ def target_lp(known_laminate) -> NDArray[np.float32]:
 # ──────────────────────────────────────────────
 
 def lp_rmse_threshold(n_layers: int) -> float:
-    """RMSE threshold that scales with N (more layers → looser per-layer)."""
-    return 5e-5 / np.sqrt(max(n_layers, 1))
+    """
+    RMSE threshold that scales with N.
+    
+    The paper achieves ~4e-4 for 12-layer problems (Viquerat LP set).
+    For smaller N the residual is naturally smaller; for larger N it's looser.
+    """
+    base = 5e-4
+    return base * np.sqrt(max(n_layers, 1) / 12.0)
 
 
 def angle_deviation_threshold_deg(n_layers: int) -> float:

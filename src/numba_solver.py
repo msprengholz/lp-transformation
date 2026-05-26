@@ -8,8 +8,6 @@ Usage:
     from src.numba_solver import optimize_laminate_numba
 """
 
-import math
-from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from numpy.typing import NDArray
 
@@ -44,29 +42,14 @@ def _get_lp_numba(lam, Z2, Z3, invN, N2, N3):
     lp[2] = c4 * invN; lp[3] = s4 * invN
 
     s = 0.0
-    for i in range(N): s += Z2[i] * cos2[i]
-    lp[4] = s * N2
-    s = 0.0
-    for i in range(N): s += Z2[i] * sin2[i]
-    lp[5] = s * N2
-    s = 0.0
-    for i in range(N): s += Z2[i] * cos4[i]
-    lp[6] = s * N2
-    s = 0.0
-    for i in range(N): s += Z2[i] * sin4[i]
-    lp[7] = s * N2
-    s = 0.0
-    for i in range(N): s += Z3[i] * cos2[i]
-    lp[8] = s * N3
-    s = 0.0
-    for i in range(N): s += Z3[i] * sin2[i]
-    lp[9] = s * N3
-    s = 0.0
-    for i in range(N): s += Z3[i] * cos4[i]
-    lp[10] = s * N3
-    s = 0.0
-    for i in range(N): s += Z3[i] * sin4[i]
-    lp[11] = s * N3
+    for i in range(N): s += Z2[i] * cos2[i]; lp[4] = s * N2; s = 0.0
+    for i in range(N): s += Z2[i] * sin2[i]; lp[5] = s * N2; s = 0.0
+    for i in range(N): s += Z2[i] * cos4[i]; lp[6] = s * N2; s = 0.0
+    for i in range(N): s += Z2[i] * sin4[i]; lp[7] = s * N2; s = 0.0
+    for i in range(N): s += Z3[i] * cos2[i]; lp[8] = s * N3; s = 0.0
+    for i in range(N): s += Z3[i] * sin2[i]; lp[9] = s * N3; s = 0.0
+    for i in range(N): s += Z3[i] * cos4[i]; lp[10] = s * N3; s = 0.0
+    for i in range(N): s += Z3[i] * sin4[i]; lp[11] = s * N3
     return lp
 
 
@@ -156,54 +139,8 @@ def _irpropm_numba(lam, lp_t, it_iRprop, Z2, Z3, invN, N2, N3,
 
 
 # ──────────────────────────────────────────────
-# Thread-safe per-start runner (NOT jit-decorated)
-# Runs one chunk of starts in a thread.  Each call to the
-# JIT functions releases the GIL (nogil=True), so threads
-# achieve true parallelism on CPU-bound work.
+# Helpers
 # ──────────────────────────────────────────────
-
-def _run_chunk(rand_lams, lp_t, idx_start, idx_end,
-               delta_coarse, ang_steps_coarse,
-               delta_fine, ang_steps_fine,
-               irprop_iters, irprop_grad_tol,
-               n_coarse_fine,
-               Z2, Z3, invN, N2, N3):
-    """Optimise a slice of starts.  Runs in a ThreadPoolExecutor thread."""
-    chunk_size = idx_end - idx_start
-    layers = rand_lams.shape[1]
-    half_pi = np.float32(np.pi / 2.0)
-    pi_f = np.float32(np.pi)
-    out = np.empty((chunk_size, layers), dtype=np.float32)
-    los = np.empty(chunk_size, dtype=np.float32)
-
-    for local_i in range(chunk_size):
-        src_idx = idx_start + local_i
-        lam = rand_lams[src_idx].copy()
-
-        for _ in range(n_coarse_fine):
-            lam = _ssearch_numba(lam, lp_t, delta_coarse, ang_steps_coarse,
-                                  Z2, Z3, invN, N2, N3)
-            lam = _ssearch_numba(lam, lp_t, delta_fine, ang_steps_fine,
-                                  Z2, Z3, invN, N2, N3)
-
-        lam = _irpropm_numba(lam, lp_t, irprop_iters,
-                              Z2, Z3, invN, N2, N3,
-                              np.float32(0.1), np.float32(1e-8),
-                              np.float32(0.3), np.float32(1.2),
-                              np.float32(0.5), np.float32(irprop_grad_tol))
-
-        for k in range(layers):
-            lam[k] = (lam[k] + half_pi) % pi_f - half_pi
-        out[local_i] = lam
-
-        lp = _get_lp_numba(lam, Z2, Z3, invN, N2, N3)
-        s = np.float32(0.0)
-        for j in range(12):
-            d = lp[j] - lp_t[j]; s += d * d
-        los[local_i] = np.sqrt(s / layers)
-
-    return idx_start, out, los
-
 
 def _prepare_arrays(N):
     k = np.arange(N, dtype=np.float32)
@@ -216,9 +153,13 @@ def _prepare_arrays(N):
             np.float32(4.0 / (fN * fN * fN)))
 
 
+# ──────────────────────────────────────────────
+# Public API
+# ──────────────────────────────────────────────
+
 def optimize_laminate_numba(rand_lams: NDArray[np.float32],
                             lp_t: NDArray[np.float32],
-                            n_coarse_fine: int = 3,
+                            n_coarse_fine: int = 1,
                             delta_coarse_deg: float = 10.0,
                             delta_fine_deg: float = 5.0,
                             irprop_iters: int = 3000,
@@ -226,10 +167,6 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
                             ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """
     Full optimisation pipeline using numba-JIT kernels.
-
-    Multi-start runs are parallelised across CPU cores via
-    ``ThreadPoolExecutor`` --- each JIT call releases the GIL
-    (``nogil=True``), so threads achieve true parallelism.
 
     Falls back to numpy if numba is not installed.
     """
@@ -244,28 +181,35 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
     df = np.float32(np.deg2rad(delta_fine_deg))
     ac = int(np.floor(np.pi / dc))
     af = int(np.floor(np.pi / df))
+    half_pi = np.float32(np.pi / 2.0)
+    pi_f = np.float32(np.pi)
     gtol = np.float32(irprop_grad_tol)
 
-    params = (dc, ac, df, af, irprop_iters, gtol, n_coarse_fine,
-              Z2, Z3, invN, N2, N3)
-
-    num_samples = rand_lams.shape[0]
-    n_threads = min(8, num_samples)
-    chunk = int(math.ceil(num_samples / n_threads))
-
-    with ThreadPoolExecutor(max_workers=n_threads) as pool:
-        futures = []
-        for i in range(0, num_samples, chunk):
-            end = min(i + chunk, num_samples)
-            fut = pool.submit(_run_chunk, rand_lams, lp_t, i, end, *params)
-            futures.append(fut)
-
+    num_samples, layers = rand_lams.shape
     out = np.empty_like(rand_lams)
     los = np.empty(num_samples, dtype=np.float32)
-    for fut in futures:
-        start, chunk_out, chunk_los = fut.result()
-        end = start + chunk_out.shape[0]
-        out[start:end] = chunk_out
-        los[start:end] = chunk_los
+
+    for idx in range(num_samples):
+        lam = rand_lams[idx].copy()
+
+        for _ in range(n_coarse_fine):
+            lam = _ssearch_numba(lam, lp_t, dc, ac, Z2, Z3, invN, N2, N3)
+            lam = _ssearch_numba(lam, lp_t, df, af, Z2, Z3, invN, N2, N3)
+
+        lam = _irpropm_numba(lam, lp_t, irprop_iters,
+                              Z2, Z3, invN, N2, N3,
+                              np.float32(0.1), np.float32(1e-8),
+                              np.float32(0.3), np.float32(1.2),
+                              np.float32(0.5), gtol)
+
+        for k in range(layers):
+            lam[k] = (lam[k] + half_pi) % pi_f - half_pi
+        out[idx] = lam
+
+        lp = _get_lp_numba(lam, Z2, Z3, invN, N2, N3)
+        s = np.float32(0.0)
+        for j in range(12):
+            d = lp[j] - lp_t[j]; s += d * d
+        los[idx] = np.sqrt(s / layers)
 
     return out, los

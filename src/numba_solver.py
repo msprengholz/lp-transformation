@@ -24,7 +24,7 @@ except ImportError:
 # JIT: forward LP
 # ═══════════════════════════════════════════════
 
-@jit(nopython=True, nogil=True, cache=True, fastmath=True, parallel=True)
+@jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _get_lp_numba(lam, Z2, Z3, invN, N2, N3):
     N = lam.size
     lp = np.zeros(12, dtype=np.float32)
@@ -85,7 +85,7 @@ def _get_lp_numba(lam, Z2, Z3, invN, N2, N3):
 # JIT: combined LP + gradient
 # ═══════════════════════════════════════════════
 
-@jit(nopython=True, nogil=True, cache=True, fastmath=True, parallel=True)
+@jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3):
     N = lam.size
     lp = np.zeros(12, dtype=np.float32)
@@ -170,7 +170,7 @@ def _trig_from_lam(lam):
             np.cos(lam * 4), np.sin(lam * 4))
 
 
-@jit(nopython=True, nogil=True, cache=True, fastmath=True, parallel=True)
+@jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _lp_from_trig(cos2, sin2, cos4, sin4, Z2, Z3, invN, N2, N3):
     """Compute 12 LP values from precomputed trig arrays."""
     N = cos2.size
@@ -202,7 +202,7 @@ def _lp_from_trig(cos2, sin2, cos4, sin4, Z2, Z3, invN, N2, N3):
     return lp
 
 
-@jit(nopython=True, nogil=True, cache=True, fastmath=True, parallel=True)
+@jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _eval_angle(cos2, sin2, cos4, sin4, i, angle,
                 Z2, Z3, invN, N2, N3, lp_t):
     """Set trig for layer i, compute LP RMSE loss."""

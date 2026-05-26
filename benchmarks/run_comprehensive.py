@@ -153,7 +153,7 @@ def benchmark_viquerat_discovery(max_starts=50000):
 # Mode 2: Sprengholz 48-layer throughput
 # ──────────────────────────────────────────────
 
-def benchmark_sprengholz_48(time_limit=60.0, max_starts=5000):
+def benchmark_sprengholz_48(time_limit=60.0, max_starts=30000):
     """Run as many starts as possible in time_limit seconds.
 
     Uses tighter solver parameters (n_coarse_fine=2, grad_tol=1e-4)

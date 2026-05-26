@@ -252,9 +252,14 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
 
     Z2, Z3, invN, N2, N3 = _prepare_arrays(rand_lams.shape[1])
     dc = np.float32(np.deg2rad(delta_coarse_deg))
-    df = np.float32(np.deg2rad(delta_fine_deg))
     ac = int(np.floor(np.pi / dc))
-    af = int(np.floor(np.pi / df))
+    # Fine search: skip if delta_fine_deg <= 0
+    if delta_fine_deg > 0:
+        df = np.float32(np.deg2rad(delta_fine_deg))
+        af = int(np.floor(np.pi / df))
+    else:
+        df = dc  # same as coarse -> do_fine will be False
+        af = 0
     half_pi = np.float32(np.pi / 2.0)
     pi_f = np.float32(np.pi)
     gtol = np.float32(irprop_grad_tol)

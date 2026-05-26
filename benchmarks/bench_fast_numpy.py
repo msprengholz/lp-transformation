@@ -13,12 +13,14 @@ def bench(label, solver_fn, starts, lp_t, n_starts):
     t0 = time.perf_counter()
     opt, losses = solver_fn(starts, lp_t)
     dt = time.perf_counter() - t0
-    # Count unique solutions (RMSE < 1e-3, rounded to 0.1 deg)
+    # Count unique VALID solutions (RMSE < 1e-3, rounded to 0.1 deg)
+    from src.lp_functions import compute_lp_rmse
     uniq = set()
-    for o in opt:
-        d = np.rad2deg(o); d = (d + 90) % 180 - 90
-        uniq.add(tuple(np.round(d, 1)))
-    print("  %-20s  %6.1fs  best=%.2e  median=%.2e  unique=%d" % (
+    for idx in range(len(opt)):
+        if losses[idx] < 1e-3:
+            d = np.rad2deg(opt[idx]); d = (d + 90) % 180 - 90
+            uniq.add(tuple(np.round(d, 1)))
+    print("  %-20s  %6.1fs  best=%.2e  median=%.2e  valid=%d" % (
         label, dt, losses.min(), np.median(losses), len(uniq)))
     return dt, len(uniq)
 

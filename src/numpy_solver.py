@@ -122,7 +122,7 @@ def optimize_laminate(rand_lams: NDArray[np.float32],
                       delta_coarse_deg: float = 10.0,
                       delta_fine_deg: float = 5.0,
                       irprop_iters: int = 3000,
-                      irprop_patience: int = 100,
+                      irprop_grad_tol: float = 1e-6,
                       ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """
     Full optimisation pipeline for multiple starting guesses.
@@ -139,7 +139,7 @@ def optimize_laminate(rand_lams: NDArray[np.float32],
     delta_coarse_deg : coarse grid spacing (degrees)
     delta_fine_deg   : fine grid spacing (degrees)
     irprop_iters     : max iRprop iterations
-    irprop_patience  : iRprop early-stopping patience
+    irprop_grad_tol  : iRprop gradient-norm convergence threshold
 
     Returns
     -------
@@ -161,9 +161,9 @@ def optimize_laminate(rand_lams: NDArray[np.float32],
             lam = ssearch(lam, delta_coarse, lp_t)
             lam = ssearch(lam, delta_fine, lp_t)
 
-        # Local refinement with adaptive early stopping
+        # Local refinement with gradient-norm convergence
         lam = iRpropm(lam, lp_t, it_iRprop=irprop_iters,
-                      patience=irprop_patience)
+                      grad_tol=irprop_grad_tol)
 
         # Wrap to [-π/2, π/2]
         lam = (lam + np.pi / 2) % np.pi - np.pi / 2

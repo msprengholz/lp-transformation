@@ -63,14 +63,13 @@ def iRpropm(lam: NDArray[np.float32], lp_t: NDArray[np.float32],
             s_max: float = 0.3,
             n_p: float = 1.2,
             n_m: float = 0.5,
-            tol: float = 1e-12,
-            patience: int = 100) -> NDArray[np.float32]:
+            grad_tol: float = 1e-6) -> NDArray[np.float32]:
     """
     Improved Rprop- (resilient backpropagation with weight-backtracking).
 
     Uses the combined ``get_lp_and_grad`` to avoid redundant trig
-    computation, and applies early stopping when the residual stops
-    decreasing.
+    computation.  Early-stops when the max gradient component falls
+    below *grad_tol* (indicating a stationary point has been reached).
 
     Parameters
     ----------
@@ -82,8 +81,7 @@ def iRpropm(lam: NDArray[np.float32], lp_t: NDArray[np.float32],
     s_max     : maximum step size
     n_p       : step increase factor (when sign persists)
     n_m       : step decrease factor (when sign changes)
-    tol       : absolute tolerance on loss for early stopping
-    patience  : iterations without improvement before early stop
+    grad_tol  : stop when max |grad| < this threshold
 
     Returns
     -------
@@ -92,16 +90,15 @@ def iRpropm(lam: NDArray[np.float32], lp_t: NDArray[np.float32],
     layers = lam.size
     s = np.full(layers, sigma, dtype=np.float32)
 
-    # Use the combined function — computes LP + gradient in one trig pass
     grad0 = get_lp_and_grad(lam, lp_t)
     grad1 = np.empty_like(grad0)
 
-    best_lam = lam.copy()
-    best_loss = compute_lp_rmse(lam, lp_t)
-    stall = 0
-
-    for iteration in range(it_iRprop):
+    for _ in range(it_iRprop):
         grad1 = get_lp_and_grad(lam, lp_t)
+
+        # Check convergence via gradient norm
+        if np.max(np.abs(grad1)) < grad_tol:
+            break
 
         for k in range(layers):
             if grad0[k] * grad1[k] > 0:
@@ -112,19 +109,6 @@ def iRpropm(lam: NDArray[np.float32], lp_t: NDArray[np.float32],
             lam[k] -= np.sign(grad1[k]) * s[k]
             grad0[k] = grad1[k]
 
-        # Early stopping check
-        loss = compute_lp_rmse(lam, lp_t)
-        if loss < best_loss:
-            best_lam[:] = lam
-            best_loss = loss
-            stall = 0
-        else:
-            stall += 1
-
-        if best_loss < tol or stall > patience:
-            break
-
-    lam[:] = best_lam
     return lam
 
 

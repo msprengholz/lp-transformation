@@ -3,9 +3,6 @@ Numba-accelerated solver for lamination parameter back-transformation.
 
 JIT-compiles the hot-path functions to machine code via LLVM.
 Falls back to numpy if numba is not installed.
-
-Usage:
-    from src.numba_solver import optimize_laminate_numba
 """
 
 import numpy as np
@@ -22,9 +19,9 @@ except ImportError:
         return wrapper
 
 
-# ──────────────────────────────────────────────
+# ═══════════════════════════════════════════════
 # JIT: forward LP
-# ──────────────────────────────────────────────
+# ═══════════════════════════════════════════════
 
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _get_lp_numba(lam, Z2, Z3, invN, N2, N3):
@@ -35,48 +32,114 @@ def _get_lp_numba(lam, Z2, Z3, invN, N2, N3):
     cos4 = np.cos(lam * 4)
     sin4 = np.sin(lam * 4)
 
+    # In-plane
     c2 = 0.0; s2 = 0.0; c4 = 0.0; s4 = 0.0
     for i in range(N):
         c2 += cos2[i]; s2 += sin2[i]; c4 += cos4[i]; s4 += sin4[i]
-    lp[0] = c2 * invN; lp[1] = s2 * invN
-    lp[2] = c4 * invN; lp[3] = s4 * invN
+    lp[0] = c2 * invN
+    lp[1] = s2 * invN
+    lp[2] = c4 * invN
+    lp[3] = s4 * invN
 
+    # Coupling
     s = 0.0
-    for i in range(N): s += Z2[i] * cos2[i]; lp[4] = s * N2; s = 0.0
-    for i in range(N): s += Z2[i] * sin2[i]; lp[5] = s * N2; s = 0.0
-    for i in range(N): s += Z2[i] * cos4[i]; lp[6] = s * N2; s = 0.0
-    for i in range(N): s += Z2[i] * sin4[i]; lp[7] = s * N2; s = 0.0
-    for i in range(N): s += Z3[i] * cos2[i]; lp[8] = s * N3; s = 0.0
-    for i in range(N): s += Z3[i] * sin2[i]; lp[9] = s * N3; s = 0.0
-    for i in range(N): s += Z3[i] * cos4[i]; lp[10] = s * N3; s = 0.0
-    for i in range(N): s += Z3[i] * sin4[i]; lp[11] = s * N3
+    for i in range(N):
+        s += Z2[i] * cos2[i]
+    lp[4] = s * N2
+    s = 0.0
+    for i in range(N):
+        s += Z2[i] * sin2[i]
+    lp[5] = s * N2
+    s = 0.0
+    for i in range(N):
+        s += Z2[i] * cos4[i]
+    lp[6] = s * N2
+    s = 0.0
+    for i in range(N):
+        s += Z2[i] * sin4[i]
+    lp[7] = s * N2
+
+    # Out-of-plane
+    s = 0.0
+    for i in range(N):
+        s += Z3[i] * cos2[i]
+    lp[8] = s * N3
+    s = 0.0
+    for i in range(N):
+        s += Z3[i] * sin2[i]
+    lp[9] = s * N3
+    s = 0.0
+    for i in range(N):
+        s += Z3[i] * cos4[i]
+    lp[10] = s * N3
+    s = 0.0
+    for i in range(N):
+        s += Z3[i] * sin4[i]
+    lp[11] = s * N3
+
     return lp
 
+
+# ═══════════════════════════════════════════════
+# JIT: combined LP + gradient
+# ═══════════════════════════════════════════════
 
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3):
     N = lam.size
     lp = np.zeros(12, dtype=np.float32)
     grad = np.zeros(N, dtype=np.float32)
-    lam2 = lam * 2; lam4 = lam * 4
-    cos2 = np.cos(lam2); sin2 = np.sin(lam2)
-    cos4 = np.cos(lam4); sin4 = np.sin(lam4)
 
+    lam2 = lam * 2
+    lam4 = lam * 4
+    cos2 = np.cos(lam2)
+    sin2 = np.sin(lam2)
+    cos4 = np.cos(lam4)
+    sin4 = np.sin(lam4)
+
+    # ── LP ──
     c2 = 0.0; s2 = 0.0; c4 = 0.0; s4 = 0.0
     for i in range(N):
         c2 += cos2[i]; s2 += sin2[i]; c4 += cos4[i]; s4 += sin4[i]
-    lp[0] = c2 * invN; lp[1] = s2 * invN
-    lp[2] = c4 * invN; lp[3] = s4 * invN
-    s = 0.0
-    for i in range(N): s += Z2[i] * cos2[i]; lp[4] = s * N2; s = 0.0
-    for i in range(N): s += Z2[i] * sin2[i]; lp[5] = s * N2; s = 0.0
-    for i in range(N): s += Z2[i] * cos4[i]; lp[6] = s * N2; s = 0.0
-    for i in range(N): s += Z2[i] * sin4[i]; lp[7] = s * N2; s = 0.0
-    for i in range(N): s += Z3[i] * cos2[i]; lp[8] = s * N3; s = 0.0
-    for i in range(N): s += Z3[i] * sin2[i]; lp[9] = s * N3; s = 0.0
-    for i in range(N): s += Z3[i] * cos4[i]; lp[10] = s * N3; s = 0.0
-    for i in range(N): s += Z3[i] * sin4[i]; lp[11] = s * N3
+    lp[0] = c2 * invN
+    lp[1] = s2 * invN
+    lp[2] = c4 * invN
+    lp[3] = s4 * invN
 
+    s = 0.0
+    for i in range(N):
+        s += Z2[i] * cos2[i]
+    lp[4] = s * N2
+    s = 0.0
+    for i in range(N):
+        s += Z2[i] * sin2[i]
+    lp[5] = s * N2
+    s = 0.0
+    for i in range(N):
+        s += Z2[i] * cos4[i]
+    lp[6] = s * N2
+    s = 0.0
+    for i in range(N):
+        s += Z2[i] * sin4[i]
+    lp[7] = s * N2
+    s = 0.0
+    for i in range(N):
+        s += Z3[i] * cos2[i]
+    lp[8] = s * N3
+    s = 0.0
+    for i in range(N):
+        s += Z3[i] * sin2[i]
+    lp[9] = s * N3
+    s = 0.0
+    for i in range(N):
+        s += Z3[i] * cos4[i]
+    lp[10] = s * N3
+    s = 0.0
+    for i in range(N):
+        s += Z3[i] * sin4[i]
+    lp[11] = s * N3
+
+    # ── Gradient ──
     for k in range(N):
         val = (-2 * sin2[k] * (lp_t[0] - lp[0]) +
                 2 * cos2[k] * (lp_t[1] - lp[1]) +
@@ -91,8 +154,13 @@ def _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3):
                -2 * sin4[k] * Z3[k] * (lp_t[10] - lp[10]) +
                 2 * cos4[k] * Z3[k] * (lp_t[11] - lp[11]))
         grad[k] = -val * 2
+
     return lp, grad
 
+
+# ═══════════════════════════════════════════════
+# JIT: sequential search
+# ═══════════════════════════════════════════════
 
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _ssearch_numba(lam, lp_t, delta, ang_steps, Z2, Z3, invN, N2, N3):
@@ -106,13 +174,19 @@ def _ssearch_numba(lam, lp_t, delta, ang_steps, Z2, Z3, invN, N2, N3):
             lp = _get_lp_numba(best_lam, Z2, Z3, invN, N2, N3)
             loss = np.float32(0.0)
             for j in range(12):
-                d = lp[j] - lp_t[j]; loss += d * d
+                d = lp[j] - lp_t[j]
+                loss += d * d
             loss = np.sqrt(loss)
             if loss < best_loss:
-                lam[i] = best_lam[i]; best_loss = loss
+                lam[i] = best_lam[i]
+                best_loss = loss
         best_lam[i] = lam[i]
     return best_lam
 
+
+# ═══════════════════════════════════════════════
+# JIT: iRprop-
+# ═══════════════════════════════════════════════
 
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _irpropm_numba(lam, lp_t, it_iRprop, Z2, Z3, invN, N2, N3,
@@ -132,15 +206,16 @@ def _irpropm_numba(lam, lp_t, it_iRprop, Z2, Z3, invN, N2, N3,
             if grad0[k] * grad1[k] > 0:
                 s[k] = min(s[k] * n_p, s_max)
             elif grad0[k] * grad1[k] < 0:
-                s[k] = max(s[k] * n_m, s_min); grad1[k] = np.float32(0.0)
+                s[k] = max(s[k] * n_m, s_min)
+                grad1[k] = np.float32(0.0)
             lam[k] -= np.sign(grad1[k]) * s[k]
             grad0[k] = grad1[k]
     return lam
 
 
-# ──────────────────────────────────────────────
+# ═══════════════════════════════════════════════
 # Helpers
-# ──────────────────────────────────────────────
+# ═══════════════════════════════════════════════
 
 def _prepare_arrays(N):
     k = np.arange(N, dtype=np.float32)
@@ -153,9 +228,9 @@ def _prepare_arrays(N):
             np.float32(4.0 / (fN * fN * fN)))
 
 
-# ──────────────────────────────────────────────
+# ═══════════════════════════════════════════════
 # Public API
-# ──────────────────────────────────────────────
+# ═══════════════════════════════════════════════
 
 def optimize_laminate_numba(rand_lams: NDArray[np.float32],
                             lp_t: NDArray[np.float32],
@@ -167,7 +242,6 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
                             ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """
     Full optimisation pipeline using numba-JIT kernels.
-
     Falls back to numpy if numba is not installed.
     """
     if not HAS_NUMBA:
@@ -209,7 +283,8 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
         lp = _get_lp_numba(lam, Z2, Z3, invN, N2, N3)
         s = np.float32(0.0)
         for j in range(12):
-            d = lp[j] - lp_t[j]; s += d * d
+            d = lp[j] - lp_t[j]
+            s += d * d
         los[idx] = np.sqrt(s / layers)
 
     return out, los

@@ -118,7 +118,7 @@ def iRpropm(lam: NDArray[np.float32], lp_t: NDArray[np.float32],
 
 def optimize_laminate(rand_lams: NDArray[np.float32],
                       lp_t: NDArray[np.float32],
-                      n_coarse_fine: int = 1,
+                      n_coarse_fine: int = 3,
                       delta_coarse_deg: float = 10.0,
                       delta_fine_deg: float = 5.0,
                       irprop_iters: int = 3000,

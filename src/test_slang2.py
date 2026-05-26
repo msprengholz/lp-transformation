@@ -31,7 +31,7 @@ float arr_sum(float[] arr, int N) {
 """
 print("Loading array module...", flush=True)
 mod2 = sl.Module.load_from_source(dev, "arr_sum", src2)
-arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+arr = [1.0, 2.0, 3.0, 4.0, 5.0]  # Python list, not numpy array
 v2 = mod2.arr_sum(arr, int(5))
 print("  sum([1,2,3,4,5]) =", v2, flush=True)
 

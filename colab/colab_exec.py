@@ -3,15 +3,13 @@
 Execute a shell command on a persistent Google Colab GPU session.
 
 Usage:
-    python3 colab/colab_exec.py --cmd "python3 -m pytest tests/ -v"
     python3 colab/colab_exec.py --cmd "python3 benchmarks/colab_benchmark.py"
-    python3 colab/colab_exec.py --cmd "python3 -c \"print('hello')\""
+    python3 colab/colab_exec.py --cmd "python3 -m pytest tests/ -v"
 
-Manages a persistent session named 'lp-autoresearch'.
-Creates it on first use with a T4 GPU; reuses it on subsequent calls.
+Manages a persistent session named 'lp-autoresearch' with a T4 GPU.
 """
 
-import subprocess, sys, os, time, argparse, textwrap
+import subprocess, sys, os, time, argparse, base64
 
 COLAB_SESSION = "lp-autoresearch"
 REPO_URL = "https://github.com/msprengholz/lp-transformation.git"
@@ -25,40 +23,35 @@ def log(msg):
 
 
 def colab(*args, timeout=120, input_text=None):
-    """Run a colab-cli command and return CompletedProcess."""
     cmd = UVX_BASE + list(args)
-    log(f"Running: colab {' '.join(args)}")
+    log(f"colab {' '.join(args)[:120]}")
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                        input=input_text)
-    if r.returncode != 0 and not args[0] in ("sessions", "status"):
-        log(f"colab stderr: {r.stderr[:300]}")
     return r
 
 
 def ensure_session():
-    """Create the GPU session if it doesn't already exist."""
+    """Create GPU session if needed."""
     r = colab("sessions", timeout=30)
     if COLAB_SESSION in r.stdout:
-        log(f"Session '{COLAB_SESSION}' already exists")
+        log(f"Session '{COLAB_SESSION}' ready")
         return True
-    log(f"Creating session '{COLAB_SESSION}' with T4 GPU...")
+    log(f"Creating session '{COLAB_SESSION}' (T4 GPU)...")
     r = colab("new", "-s", COLAB_SESSION, "--gpu", "T4", timeout=120)
     if r.returncode != 0:
-        log(f"Failed to create session: {r.stderr[:300]}")
+        log(f"FAILED: {r.stderr[:200]}")
         return False
-    log("Session created")
-    # Ensure base packages are installed (first run only)
-    colab("install", "-s", COLAB_SESSION, "-q", "numpy", "pytest", timeout=120)
+    # Install deps silently
+    colab("install", "-s", COLAB_SESSION, "numpy", "pytest", timeout=120)
     return True
 
 
 def ensure_repo():
-    """Clone or pull the repo on the Colab VM."""
-    # Check if repo exists
-    check = colab("exec", "-s", COLAB_SESSION, timeout=30,
-                  input_text=f"import os; print(os.path.isdir('{REPO_DIR}'))")
-    if "True" in check.stdout:
-        log("Repo exists, pulling...")
+    """Clone/pull repo on Colab VM."""
+    r = colab("exec", "-s", COLAB_SESSION, timeout=30,
+              input_text=f"import os; print(os.path.isdir('{REPO_DIR}'))")
+    if "True" in r.stdout:
+        log("Repo exists, updating...")
         colab("exec", "-s", COLAB_SESSION, timeout=30,
               input_text=f"import subprocess; subprocess.run(['git', '-C', '{REPO_DIR}', 'pull'], capture_output=True)")
     else:
@@ -68,44 +61,46 @@ def ensure_repo():
 
 
 def run_command(cmd, timeout=600):
-    """Run a command on the Colab VM and return (returncode, stdout, stderr)."""
-    # Escape the command for Python string
-    escaped_cmd = cmd.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+    """
+    Run a shell command on the Colab VM.
+    Returns (returncode, stdout_text).
+    Prints stdout as it comes (for real-time METRIC parsing).
+    """
+    # Base64-encode the command to avoid quoting issues
+    cmd_b64 = base64.b64encode(cmd.encode()).decode()
     
-    # Write command to a temp file on Colab
-    setup = textwrap.dedent(f'''
-    import subprocess, sys, os
-    os.chdir("{REPO_DIR}")
-    sys.path.insert(0, ".")
-    cmd = """{cmd}"""
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout={timeout})
-    print(r.stdout)
-    if r.stderr:
-        print("STDERR:", r.stderr, file=sys.stderr)
-    sys.exit(r.returncode)
-    ''').strip()
+    bootstrap = (
+        "import subprocess, sys, os, base64; "
+        f"os.chdir('{REPO_DIR}'); "
+        f"sys.path.insert(0, '.'); "
+        f"cmd = base64.b64decode('{cmd_b64}').decode(); "
+        "r = subprocess.run(cmd, shell=True, capture_output=True, "
+        "timeout=None); "
+        "print(r.stdout.decode() if isinstance(r.stdout, bytes) else r.stdout, end=''); "
+        "sys.exit(r.returncode)"
+    )
     
     r = colab("exec", "-s", COLAB_SESSION, timeout=timeout + 30,
-              input_text=setup)
-    return r.returncode, r.stdout, r.stderr
+              input_text=bootstrap)
+    # Print stdout from Colab so run_experiment can see METRIC lines
+    if r.stdout:
+        print(r.stdout, end="")
+    if r.stderr and "Traceback" in r.stderr:
+        print(r.stderr, end="", file=sys.stderr)
+    return r.returncode
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run command on Colab GPU session")
-    parser.add_argument("--cmd", required=True, help="Shell command to run")
-    parser.add_argument("--timeout", type=int, default=600,
-                        help="Command timeout in seconds")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cmd", required=True, help="Shell command to run on Colab")
+    parser.add_argument("--timeout", type=int, default=600)
     args = parser.parse_args()
 
     if not ensure_session():
         sys.exit(1)
     ensure_repo()
-    
-    code, out, err = run_command(args.cmd, timeout=args.timeout)
-    print(out, end="")
-    if err:
-        print(err, end="", file=sys.stderr)
-    sys.exit(code)
+    rc = run_command(args.cmd, timeout=args.timeout)
+    sys.exit(rc)
 
 
 if __name__ == "__main__":

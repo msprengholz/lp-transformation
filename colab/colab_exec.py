@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Execute a shell command on a persistent Google Colab GPU session.
 

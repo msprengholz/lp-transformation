@@ -281,7 +281,7 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
                             delta_coarse_deg: float = 10.0,
                             delta_fine_deg: float = 0.0,
                             irprop_iters: int = 3000,
-                            irprop_grad_tol: float = 1e-5,
+                            irprop_grad_tol: float = 1e-4,
                             ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """
     Full optimisation pipeline using numba-JIT kernels.

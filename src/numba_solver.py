@@ -278,25 +278,22 @@ def _ssearch_numba(lam, lp_t, delta, ang_steps, Z2, Z3, invN, N2, N3):
 @jit(nopython=True, nogil=True, cache=True, fastmath=True)
 def _irpropm_numba(lam, lp_t, it_iRprop, Z2, Z3, invN, N2, N3,
                    sigma, s_min, s_max, n_p, n_m, grad_tol):
-    layers = lam.size
-    s = np.full(layers, sigma, dtype=np.float32)
-    _, grad0 = _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3)
-    grad1 = np.empty_like(grad0)
+    """
+    Simplified sign gradient descent.
+
+    Replaces adaptive Rprop with fixed-step sign gradient descent
+    for a simpler inner loop (no s[k], min/max, backtracking).
+    """
+    lr = sigma
     for _ in range(it_iRprop):
-        _, grad1 = _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3)
+        _, grad = _get_lp_and_grad_numba(lam, lp_t, Z2, Z3, invN, N2, N3)
         gmax = np.float32(0.0)
-        for k in range(layers):
-            gmax = max(gmax, abs(grad1[k]))
+        for k in range(grad.size):
+            gmax = max(gmax, abs(grad[k]))
         if gmax < grad_tol:
             break
-        for k in range(layers):
-            if grad0[k] * grad1[k] > 0:
-                s[k] = min(s[k] * n_p, s_max)
-            elif grad0[k] * grad1[k] < 0:
-                s[k] = max(s[k] * n_m, s_min)
-                grad1[k] = np.float32(0.0)
-            lam[k] -= np.sign(grad1[k]) * s[k]
-            grad0[k] = grad1[k]
+        for k in range(grad.size):
+            lam[k] -= np.sign(grad[k]) * lr
     return lam
 
 

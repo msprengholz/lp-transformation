@@ -222,38 +222,21 @@ def _prepare_arrays(N):
 # Public API
 # ──────────────────────────────────────────────
 
-def optimize_laminate_numba(rand_lams: NDArray[np.float32],
-                            lp_t: NDArray[np.float32],
-                            n_coarse_fine: int = 3,
-                            delta_coarse_deg: float = 10.0,
-                            delta_fine_deg: float = 5.0,
-                            irprop_iters: int = 3000,
-                            irprop_grad_tol: float = 1e-6,
-                            ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-    """Full optimisation pipeline using numba-JIT kernels.
-
-    Falls back to numpy if numba is not installed.
-    """
-    if not HAS_NUMBA:
-        from .numpy_solver import optimize_laminate as _fb
-        return _fb(rand_lams, lp_t, n_coarse_fine,
-                    delta_coarse_deg, delta_fine_deg,
-                    irprop_iters, irprop_grad_tol)
-
+@jit(nopython=True, nogil=True, cache=True, fastmath=True, parallel=True)
+def _optimize_batch(rand_lams, lp_t,
+                    delta_coarse, ang_steps_coarse,
+                    delta_fine, ang_steps_fine,
+                    irprop_iters, irprop_grad_tol,
+                    n_coarse_fine,
+                    Z2, Z3, invN, N2, N3):
+    """Parallel batch optimisation using prange."""
     num_samples, layers = rand_lams.shape
-    Z2, Z3, invN, N2, N3 = _prepare_arrays(layers)
-
-    delta_coarse = np.float32(np.deg2rad(delta_coarse_deg))
-    delta_fine = np.float32(np.deg2rad(delta_fine_deg))
-    ang_steps_coarse = int(np.floor(np.pi / delta_coarse))
-    ang_steps_fine = int(np.floor(np.pi / delta_fine))
     half_pi = np.float32(np.pi / 2.0)
     pi_f = np.float32(np.pi)
+    optimised = np.empty_like(rand_lams)
+    losses = np.empty(num_samples, dtype=np.float32)
 
-    optimised_lams = np.zeros_like(rand_lams)
-    losses = np.zeros(num_samples, dtype=np.float32)
-
-    for idx in range(num_samples):
+    for idx in prange(num_samples):
         lam = rand_lams[idx].copy()
 
         for _ in range(n_coarse_fine):
@@ -271,7 +254,7 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
         for k in range(layers):
             lam[k] = (lam[k] + half_pi) % pi_f - half_pi
 
-        optimised_lams[idx] = lam
+        optimised[idx] = lam
 
         lp = _get_lp_numba(lam, Z2, Z3, invN, N2, N3)
         s = np.float32(0.0)
@@ -280,4 +263,38 @@ def optimize_laminate_numba(rand_lams: NDArray[np.float32],
             s += d * d
         losses[idx] = np.sqrt(s / layers)
 
-    return optimised_lams, losses
+    return optimised, losses
+
+
+def optimize_laminate_numba(rand_lams: NDArray[np.float32],
+                            lp_t: NDArray[np.float32],
+                            n_coarse_fine: int = 3,
+                            delta_coarse_deg: float = 10.0,
+                            delta_fine_deg: float = 5.0,
+                            irprop_iters: int = 3000,
+                            irprop_grad_tol: float = 1e-6,
+                            ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+    """Full optimisation pipeline using numba-JIT kernels.
+
+    Falls back to numpy if numba is not installed.
+    Uses prange for multi-start parallelisation over CPU cores.
+    """
+    if not HAS_NUMBA:
+        from .numpy_solver import optimize_laminate as _fb
+        return _fb(rand_lams, lp_t, n_coarse_fine,
+                    delta_coarse_deg, delta_fine_deg,
+                    irprop_iters, irprop_grad_tol)
+
+    Z2, Z3, invN, N2, N3 = _prepare_arrays(rand_lams.shape[1])
+
+    delta_coarse = np.float32(np.deg2rad(delta_coarse_deg))
+    delta_fine = np.float32(np.deg2rad(delta_fine_deg))
+    ang_steps_coarse = int(np.floor(np.pi / delta_coarse))
+    ang_steps_fine = int(np.floor(np.pi / delta_fine))
+
+    return _optimize_batch(rand_lams, lp_t,
+                            delta_coarse, ang_steps_coarse,
+                            delta_fine, ang_steps_fine,
+                            irprop_iters, np.float32(irprop_grad_tol),
+                            n_coarse_fine,
+                            Z2, Z3, invN, N2, N3)

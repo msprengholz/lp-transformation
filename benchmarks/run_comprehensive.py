@@ -154,7 +154,11 @@ def benchmark_viquerat_discovery(max_starts=50000):
 # ──────────────────────────────────────────────
 
 def benchmark_sprengholz_48(time_limit=60.0, max_starts=5000):
-    """Run as many starts as possible in time_limit seconds."""
+    """Run as many starts as possible in time_limit seconds.
+
+    Uses tighter solver parameters (n_coarse_fine=2, grad_tol=1e-4)
+    since the 48-layer problem requires more search and refinement.
+    """
     found = set()
     gen = StartGenerator(48)
     t_end = time.perf_counter() + time_limit
@@ -164,7 +168,8 @@ def benchmark_sprengholz_48(time_limit=60.0, max_starts=5000):
         if time.perf_counter() > t_end:
             break
         lam = next(gen)
-        opt, losses = solver(lam.reshape(1, -1), LP_SPRENGHOLZ_48)
+        opt, losses = solver(lam.reshape(1, -1), LP_SPRENGHOLZ_48,
+                              n_coarse_fine=2, irprop_grad_tol=1e-4)
         completed += 1
         best_loss = float(losses[0])
 

@@ -33,19 +33,31 @@ def colab(*args, timeout=120, input_text=None):
 
 
 def ensure_session():
-    """Create GPU session if needed."""
+    """Create GPU session if needed, with retry on capacity errors."""
     r = colab("sessions", timeout=30)
     if COLAB_SESSION in r.stdout:
         log(f"Session '{COLAB_SESSION}' ready")
         return True
-    log(f"Creating session '{COLAB_SESSION}' (T4 GPU)...")
-    r = colab("new", "-s", COLAB_SESSION, "--gpu", "T4", timeout=120)
-    if r.returncode != 0:
-        log(f"FAILED: {r.stderr[:200]}")
-        return False
-    # Install deps silently
-    colab("install", "-s", COLAB_SESSION, "numpy", "pytest", timeout=120)
-    return True
+    
+    for attempt in range(5):
+        log(f"Creating session '{COLAB_SESSION}' (T4 GPU)...")
+        r = colab("new", "-s", COLAB_SESSION, "--gpu", "T4", timeout=120)
+        if r.returncode == 0:
+            colab("install", "-s", COLAB_SESSION, "numpy", "pytest", timeout=120)
+            return True
+        if "Service Unavailable" in r.stderr:
+            wait = 30 * (attempt + 1)
+            log(f"GPU capacity full, retrying in {wait}s...")
+            time.sleep(wait)
+        else:
+            log(f"FAILED: {r.stderr[:200]}")
+            return False
+    log("All GPU retries exhausted, falling back to CPU")
+    r = colab("new", "-s", COLAB_SESSION, timeout=120)  # CPU runtime
+    if r.returncode == 0:
+        colab("install", "-s", COLAB_SESSION, "numpy", "pytest", timeout=120)
+        return True
+    return False
 
 
 def ensure_repo():

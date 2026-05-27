@@ -25,8 +25,8 @@ float[{12}] batch_lp(int call_id, float* lams_flat, int M) {{
     if (m >= M) return r;
 
     float invN = 1.0 / {N}.0;
-    float N2 = 2.0 / {N}.0;
-    float N3 = 2.0 / {N}.0;
+    float N2 = 2.0 / ({N}.0 * {N}.0);
+    float N3 = 2.0 / ({N}.0 * {N}.0 * {N}.0);
 
     float z2[{N}] = {{{z2_str}}};
     float z3[{N}] = {{{z3_str}}};

@@ -22,21 +22,10 @@ def generate_slang_lp(N, Z2, Z3):
     z3_str = ', '.join(str(int(round(z))) for z in Z3)
 
     return f"""
-struct LPResult {{
-    float v0; float v1; float v2; float v3;
-    float v4; float v5; float v6; float v7;
-    float v8; float v9; float v10; float v11;
-}};
-
-LPResult batch_lp(int call_id, float* lams_flat, int M) {{
+float[{12}] batch_lp(int call_id, float* lams_flat, int M) {{
     int m = call_id;
-    LPResult r;
-    if (m >= M) {{
-        r.v0 = 0; r.v1 = 0; r.v2 = 0; r.v3 = 0;
-        r.v4 = 0; r.v5 = 0; r.v6 = 0; r.v7 = 0;
-        r.v8 = 0; r.v9 = 0; r.v10 = 0; r.v11 = 0;
-        return r;
-    }}
+    float r[12] = (float[12])0;
+    if (m >= M) return r;
 
     float invN = 1.0 / {N}.0;
     float N2 = 2.0 / {N}.0;
@@ -67,12 +56,12 @@ LPResult batch_lp(int call_id, float* lams_flat, int M) {{
         dc4z3 += c4 * z3i; ds4z3 += s4 * z3i;
     }}
 
-    r.v0 = sum_cos2 * invN; r.v1 = sum_sin2 * invN;
-    r.v2 = sum_cos4 * invN; r.v3 = sum_sin4 * invN;
-    r.v4 = dc2z2 * N2; r.v5 = ds2z2 * N2;
-    r.v6 = dc4z2 * N2; r.v7 = ds4z2 * N2;
-    r.v8 = dc2z3 * N3; r.v9 = ds2z3 * N3;
-    r.v10 = dc4z3 * N3; r.v11 = ds4z3 * N3;
+    r[0] = sum_cos2 * invN; r[1] = sum_sin2 * invN;
+    r[2] = sum_cos4 * invN; r[3] = sum_sin4 * invN;
+    r[4] = dc2z2 * N2; r[5] = ds2z2 * N2;
+    r[6] = dc4z2 * N2; r[7] = ds4z2 * N2;
+    r[8] = dc2z3 * N3; r[9] = ds2z3 * N3;
+    r[10] = dc4z3 * N3; r[11] = ds4z3 * N3;
     return r;
 }}
 """
@@ -103,9 +92,14 @@ print("  result type:", type(result), flush=True)
 if isinstance(result, np.ndarray):
     print("  result shape:", result.shape, flush=True)
     lp_np = get_lp_batch(lams)
-    result_2d = result.reshape(M, 12) if result.ndim == 2 else result
-    if result.ndim > 2:
+    if result.ndim == 2:
+        result_2d = result
+    elif result.ndim == 1 and result.shape[0] == M * 12:
         result_2d = result.reshape(M, 12)
+    elif result.ndim == 3:
+        result_2d = result.reshape(M, 12)
+    else:
+        result_2d = result
     max_err = np.max(np.abs(result_2d - lp_np))
     print(f"  max error vs numpy: {max_err:.2e}", flush=True)
     print("  PASS" if max_err < 1e-4 else "  FAIL", flush=True)

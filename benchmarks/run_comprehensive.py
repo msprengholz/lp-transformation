@@ -229,19 +229,19 @@ def run():
         print("--- Viquerat 12-layer discovery (GPU) ---", flush=True)
         print("  Using SlangPy GPU for batch LP + iRprop", flush=True)
 
-        # Run: 200K Sobol + top_k=1000 + 75 iters
-        # Max coverage + minimal refinements. 200K should cover basin well enough for top 1000.
+        # Run: 50K + top_k=1500 + 50 iters (fast first pass)
+        # 50 iters finds ~108/112. The multi-batch fallback adds the 4 missing.
         t, starts, found = benchmark_viquerat_gpu(
-            gpu, max_starts=200000, top_k=1000, irprop_iters=75)
+            gpu, max_starts=50000, top_k=1500, irprop_iters=50)
         known_count = len(_load_known_solutions("viquerat_12_layer_solutions_complete.csv"))
-        print("  GPU: starts=200000, top_k=1000, iters=75: %.3fs, %d/%d found" % (
+        print("  GPU: starts=50000, top_k=1500, iters=50: %.3fs, %d/%d found" % (
             t, found, known_count), flush=True)
 
         # If not all found, fallback to proven config
         if found < known_count:
-            print("  Fallback to proven config...", flush=True)
+            print("  Fallback to 100 iters, top_k=2000...", flush=True)
             t2, starts2, found2 = benchmark_viquerat_gpu(
-                gpu, max_starts=50000, top_k=3000, irprop_iters=100)
+                gpu, max_starts=50000, top_k=2000, irprop_iters=100)
             print("  GPU (fallback): %.3fs, %d/%d found" % (
                 t2, found2, known_count), flush=True)
             if found2 > found:

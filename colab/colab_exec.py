@@ -54,11 +54,11 @@ def ensure_repo():
               input_text=f"import os; print(os.path.isdir('{REPO_DIR}'))")
     if "True" in r.stdout:
         log("Repo exists, updating...")
-        colab("exec", "-s", COLAB_SESSION, timeout=30,
+        colab("exec", "-s", COLAB_SESSION, timeout=60,
               input_text=f"import subprocess; subprocess.run(['git', '-C', '{REPO_DIR}', 'pull'], capture_output=True)")
     else:
         log("Cloning repo...")
-        colab("exec", "-s", COLAB_SESSION, timeout=60,
+        colab("exec", "-s", COLAB_SESSION, timeout=120,
               input_text=f"import subprocess; subprocess.run(['git', 'clone', '{REPO_URL}', '{REPO_DIR}'], capture_output=True)")
 
 

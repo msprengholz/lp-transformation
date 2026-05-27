@@ -144,13 +144,13 @@ def benchmark_viquerat_gpu(gpu, max_starts=10000, top_k=1500, irprop_iters=100):
     
     best_angles, best_losses = gpu_batch_irprop(dev, mod_irprop, best_starts, target, max_iter=irprop_iters)
     
-    # Collect solutions - count unique solutions matching known ones
-    # Also verify quality via LP RMSE
-    for i in range(top_k_actual):
-        if best_losses[i] < 0.1:  # Loss threshold (LP space, not RMSE)
-            rmse = compute_lp_rmse(best_angles[i].astype(np.float32), target)
+    # Collect solutions - sort by loss first for early stopping
+    sorted_indices = np.argsort(best_losses)
+    for idx in sorted_indices:
+        if best_losses[idx] < 0.1:  # Loss threshold (LP space)
+            rmse = compute_lp_rmse(best_angles[idx].astype(np.float32), target)
             if rmse < 2e-2:  # RMSE < 0.02 considered converged
-                key = _round_key(best_angles[i])
+                key = _round_key(best_angles[idx])
                 found.add(key)
                 if len(found) >= target_count:
                     elapsed = time.perf_counter() - t_start
@@ -231,11 +231,10 @@ def run():
         best_config = None
         
         for max_starts, top_k, iters in [
-            (5000, 1000, 50),
-            (10000, 1500, 100),
-            (20000, 1500, 50),
-            (30000, 2000, 100),
-            (50000, 3000, 100),
+            (50000, 3000, 100),  # Best from previous runs
+            (30000, 2000, 100),  # Second best
+            (20000, 1500, 100),  # Fewer starts, tighter top_k
+            (10000, 1500, 100),  # Minimal config
         ]:
             t, starts, found = benchmark_viquerat_gpu(
                 gpu, max_starts=max_starts, top_k=top_k, irprop_iters=iters)

@@ -13,8 +13,7 @@ import subprocess, sys, os, time, argparse, base64
 COLAB_SESSION = "lp-autoresearch"
 REPO_URL = "https://github.com/msprengholz/lp-transformation.git"
 REPO_DIR = "/content/lp-transformation"
-UVX_BASE = ["uvx", "--from", "git+https://github.com/monatis/google-colab-cli",
-            "colab", "--auth", "oauth2"]
+UVX_BASE = ["colab", "--auth", "oauth2"]
 
 
 def log(msg):

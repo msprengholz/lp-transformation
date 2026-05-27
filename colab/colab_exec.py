@@ -23,8 +23,12 @@ def log(msg):
 def colab(*args, timeout=120, input_text=None):
     cmd = UVX_BASE + list(args)
     log(f"colab {' '.join(args)[:120]}")
+    env = os.environ.copy()
+    env['PYTHONUTF8'] = '1'
+    env['PYTHONIOENCODING'] = 'utf-8'
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                       input=input_text)
+                       input=input_text, encoding='utf-8', errors='replace',
+                       env=env)
     return r
 
 

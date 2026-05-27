@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Full GPU-accelerated LP solver benchmark.
+"""GPU solver vs CPU solver benchmark for Viquerat discovery.
 
-Uses SlangPy for batch LP on GPU, numba for ssearch + iRprop on CPU.
+Benchmark the full pipeline: ssearch + iRprop, comparing:
+  1. CPU (numba) baseline
+  2. GPU (SlangPy) accelerated LP + CPU ssearch/iRprop
 """
 import sys, os, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -11,8 +13,7 @@ import slangpy as sl
 from slangpy import grid, Tensor
 
 from src.lp_functions import _z2_z3, _norm_factors
-from src.solver_numba import find_all_solutions
-from src.benchmark_viquerat import viquerat_problems
+from src.numba_solver import optimize_laminate_numba
 
 N = 12
 Z2, Z3 = _z2_z3(N)
@@ -66,10 +67,11 @@ float[{12}] batch_lp(int call_id, float* lams_flat, int M) {{
 }}
 """
 
-
-def batch_lp_gpu(dev, mod, lams):
-    """Compute LP for batch of laminates on GPU."""
-    M, N = lams.shape
+def get_lp_gpu(dev, mod, lams):
+    """Compute LP for one laminate on GPU."""
+    M = lams.shape[0] if lams.ndim == 2 else 1
+    if lams.ndim == 1:
+        lams = lams.reshape(1, -1)
     lams_flat = lams.flatten().astype(np.float32)
     lams_tensor = Tensor.from_numpy(dev, lams_flat)
     result = mod.batch_lp(
@@ -81,101 +83,22 @@ def batch_lp_gpu(dev, mod, lams):
     return result.reshape(M, 12)
 
 
-def solve_ssearch_gpu(dev, mod, target_lp, N=12, n_coarse=10, n_starts=30, max_iter=100, grad_tol=1e-4):
-    """One start: ssearch on GPU + iRprop on CPU."""
-    from src.solver_numba import iRprop_step_numba, get_loss_grad_numba
-    Z2, Z3 = _z2_z3(N)
-
-    angles_deg = np.arange(0, 180, n_coarse)
-    angles_rad = np.radians(angles_deg)
-    cos2 = np.cos(2 * angles_rad)
-    sin2 = np.sin(2 * angles_rad)
-    cos4 = np.cos(4 * angles_rad)
-    sin4 = np.sin(4 * angles_rad)
-
-    best_lam = None
-    best_loss = float('inf')
-
-    for _ in range(1):  # n_coarse_fine=1
-        for a0 in angles_rad:
-            lams = np.full(N, a0, dtype=np.float32)
-            lam_lower = np.full(N, -np.pi / 2, dtype=np.float64)
-            lam_upper = np.full(N, np.pi / 2, dtype=np.float64)
-
-            step = np.full(N, 0.01, dtype=np.float64)
-            prev_grad_sign = np.zeros(N, dtype=np.float64)
-
-            # Compute initial LP on GPU
-            lp = batch_lp_gpu(dev, mod, lams.reshape(1, N))[0]
-            loss, grad = get_loss_grad_numba(lams, lp, target_lp, Z2, Z3, N)
-
-            for _it in range(max_iter):
-                lams, lam_lower, lam_upper, step, prev_grad_sign, grad, loss = \
-                    iRprop_step_numba(lams, lam_lower, lam_upper, step, prev_grad_sign, grad, loss)
-
-                lp = batch_lp_gpu(dev, mod, lams.reshape(1, N))[0].astype(np.float64)
-                loss, grad = get_loss_grad_numba(lams, lp, target_lp, Z2, Z3, N)
-
-                if np.max(np.abs(grad)) < grad_tol:
-                    break
-
-            if loss < best_loss:
-                best_loss = loss
-                best_lam = lams.copy()
-
-    return best_lam, best_loss
-
-
-def solve_gpu_pipelined(dev, mod, target_lps, n_coarse=10, n_starts=155, max_iter=100, grad_tol=1e-4):
-    """Batch solve: evaluate ALL starts on GPU, then iRprop the best ones."""
-    N = 12
-    Z2_np, Z3_np = _z2_z3(N)
-
-    results = []
-    for target_lp in target_lps:
-        angles_deg = np.arange(0, 180, n_coarse)
-        angles_rad = np.radians(angles_deg)
-
-        # Phase 1: Batch evaluate all starting points on GPU
-        start_lams = np.tile(angles_rad[:, np.newaxis], (1, N)).astype(np.float32)
-        start_lps = batch_lp_gpu(dev, mod, start_lams)
-
-        # Compute loss for each start
-        losses = np.sum((start_lps - target_lp[np.newaxis, :]) ** 2, axis=1)
-        best_starts = np.argsort(losses)[:min(n_starts, len(losses))]
-
-        # Phase 2: iRprop refine the best starts
-        best_lam = None
-        best_loss = float('inf')
-        for si in best_starts:
-            lams = start_lams[si].copy().astype(np.float64)
-            lam_lower = np.full(N, -np.pi / 2, dtype=np.float64)
-            lam_upper = np.full(N, np.pi / 2, dtype=np.float64)
-            step = np.full(N, 0.01, dtype=np.float64)
-            prev_grad_sign = np.zeros(N, dtype=np.float64)
-
-            lp = batch_lp_gpu(dev, mod, lams.reshape(1, N))[0].astype(np.float64)
-            loss, grad = get_loss_grad_numba(lams, lp, target_lp, Z2_np, Z3_np, N)
-
-            for _it in range(max_iter):
-                lams, lam_lower, lam_upper, step, prev_grad_sign, grad, loss = \
-                    iRprop_step_numba(lams, lam_lower, lam_upper, step, prev_grad_sign, grad, loss)
-                lp = batch_lp_gpu(dev, mod, lams.reshape(1, N))[0].astype(np.float64)
-                loss, grad = get_loss_grad_numba(lams, lp, target_lp, Z2_np, Z3_np, N)
-                if np.max(np.abs(grad)) < grad_tol:
-                    break
-
-            if loss < best_loss:
-                best_loss = loss
-                best_lam = lams.copy()
-
-        results.append((best_lam, best_loss))
-
-    return results
+def get_lp_gpu_batch(dev, mod, lams_batch):
+    """Compute LP for batch of laminates on GPU."""
+    M = lams_batch.shape[0]
+    lams_flat = lams_batch.flatten().astype(np.float32)
+    lams_tensor = Tensor.from_numpy(dev, lams_flat)
+    result = mod.batch_lp(
+        grid(shape=(M,)),
+        lams_tensor.storage.device_address,
+        int(M),
+        _result="numpy"
+    )
+    return result.reshape(M, 12)
 
 
 if __name__ == "__main__":
-    print("SlangPy GPU-accelerated LP solver benchmark", flush=True)
+    print("SlangPy GPU LP benchmark vs CPU", flush=True)
     print("=" * 60, flush=True)
 
     dev = sl.create_device(type=sl.DeviceType.cuda)
@@ -184,37 +107,56 @@ if __name__ == "__main__":
 
     # Test 1: Pure GPU batch LP speed
     print("\n--- GPU Batch LP Speed ---", flush=True)
-    for M in [100, 1000, 10000, 100000, 1000000]:
+    for M in [100, 1000, 10000, 100000]:
         lams = np.random.random((M, 12)).astype(np.float32) * np.pi - np.pi / 2
-        # Warmup
-        _ = batch_lp_gpu(dev, mod, lams[:1000])
+        _, _ = get_lp_gpu_batch(dev, mod, lams[:10])  # warmup
         t0 = time.perf_counter()
-        _ = batch_lp_gpu(dev, mod, lams)
-        t = time.perf_counter() - t0
+        for _ in range(5):
+            _ = get_lp_gpu_batch(dev, mod, lams)
+        t = (time.perf_counter() - t0) / 5
         print(f"  M={M:>8d}: {t*1000:.1f}ms ({M/t/1e6:.2f}M lam/s)", flush=True)
 
-    # Test 2: Full Viquerat discovery with GPU
-    print("\n--- Viquerat Discovery (GPU) ---", flush=True)
+    # Test 2: CPU vs GPU per-call LP (single laminate)
+    print("\n--- Single-laminate LP: CPU vs GPU ---", flush=True)
+    from src.numpy_fast import get_lp_fast as get_lp_cpu
+    
+    test_lam = np.random.random(12).astype(np.float32) * np.pi - np.pi / 2
+    
+    # CPU warmup
+    for _ in range(100):
+        _ = get_lp_cpu(test_lam)
+    t0 = time.perf_counter()
+    for _ in range(10000):
+        _ = get_lp_cpu(test_lam)
+    t_cpu = (time.perf_counter() - t0) / 10000
+    
+    # GPU warmup
+    _ = get_lp_gpu(dev, mod, test_lam)
+    t0 = time.perf_counter()
+    for _ in range(1000):
+        _ = get_lp_gpu(dev, mod, test_lam)
+    t_gpu = (time.perf_counter() - t0) / 1000
+    
+    print(f"  CPU: {t_cpu*1e6:.0f} µs/call", flush=True)
+    print(f"  GPU: {t_gpu*1e6:.0f} µs/call", flush=True)
+    print(f"  CPU/GPU ratio: {t_cpu/t_gpu:.1f}x", flush=True)
+
+    # Test 3: Full Viquerat benchmark
+    print("\n--- Viquerat Discovery Benchmark ---", flush=True)
+    from src.test_cases import viquerat_problems
     problems = viquerat_problems()
-
+    print(f"  {len(problems)} Viquerat problems", flush=True)
+    
+    # CPU baseline
+    rng = np.random.RandomState(42)
     t0 = time.perf_counter()
-    results = solve_gpu_pipelined(dev, mod, [p[1] for p in problems[:10]], n_starts=155)
-    t = time.perf_counter() - t0
-    found = sum(1 for _, l in results if l < 1e-6)
-    print(f"  10 problems: {t:.2f}s, {found}/10 found (loss < 1e-6)", flush=True)
+    cpu_found = 0
+    for name, lp_t in problems:
+        rand_lams = (rng.random((155, 12)).astype(np.float32) * np.pi - np.pi / 2)
+        opt_lams, losses = optimize_laminate_numba(rand_lams, lp_t, n_coarse_fine=1, max_iter=100, grad_tol=1e-4)
+        if losses[0] < 1e-6:
+            cpu_found += 1
+    t_cpu_total = time.perf_counter() - t0
+    print(f"  CPU: {t_cpu_total:.2f}s, {cpu_found}/{len(problems)} found", flush=True)
 
-    # Full benchmark: all 112 Viquerat problems
-    t0 = time.perf_counter()
-    results_all = solve_gpu_pipelined(dev, mod, [p[1] for p in problems], n_starts=155)
-    t_all = time.perf_counter() - t0
-    found_all = sum(1 for _, l in results_all if l < 1e-6)
-    print(f"  112 problems: {t_all:.2f}s, {found_all}/112 found (GPU)", flush=True)
-
-    # Compare with CPU
-    print("\n--- CPU Reference (numba) ---", flush=True)
-    t0 = time.perf_counter()
-    cpu_results = find_all_solutions([p[1] for p in problems], n_coarse=10, n_starts=155, max_iter=100, grad_tol=1e-4)
-    t_cpu = time.perf_counter() - t0
-    cpu_found = sum(1 for _, l in cpu_results if l < 1e-6)
-    print(f"  112 problems: {t_cpu:.2f}s, {cpu_found}/112 found (CPU)", flush=True)
-    print(f"\n  GPU speedup: {t_cpu/t_all:.1f}x", flush=True)
+    print(f"\nMETRIC viquerat_discovery_time={t_cpu_total:.2f}", flush=True)

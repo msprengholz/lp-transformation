@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Test SlangPy GPU LP solver — return value pattern.
-
-SlangPy's grid dispatch works when functions RETURN a value,
-not when they write to buffers via void. So we rewrite batch_lp
-to return a struct containing 12 floats.
-"""
+"""Debug SlangPy GPU LP correctness — test with known input."""
 import sys, os, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -15,13 +10,15 @@ from slangpy import grid, Tensor
 from src.lp_functions import _z2_z3, _norm_factors
 from src.numpy_fast import get_lp_batch
 
+N = 12
+Z2, Z3 = _z2_z3(N)
+invN, N2, N3 = _norm_factors(N)
 
-def generate_slang_lp(N, Z2, Z3):
-    """Generate Slang shader source for LP computation — return struct pattern."""
-    z2_str = ', '.join(str(int(round(z))) for z in Z2)
-    z3_str = ', '.join(str(int(round(z))) for z in Z3)
+z2_str = ', '.join(str(int(round(z))) for z in Z2)
+z3_str = ', '.join(str(int(round(z))) for z in Z3)
 
-    return f"""
+# Start with simplest possible kernel: single laminate, return 12 floats
+shader_simple = f"""
 float[{12}] batch_lp(int call_id, float* lams_flat, int M) {{
     int m = call_id;
     float r[12] = (float[12])0;
@@ -66,71 +63,46 @@ float[{12}] batch_lp(int call_id, float* lams_flat, int M) {{
 }}
 """
 
-
 print("Creating CUDA device...", flush=True)
 dev = sl.create_device(type=sl.DeviceType.cuda)
-print("  device OK", flush=True)
 
-N = 12
-Z2, Z3 = _z2_z3(N)
-invN, N2, N3 = _norm_factors(N)
+# Test 1: Verify with zero angles (should give known values)
+print("\n--- Test 1: Zero angles (lam=0) ---", flush=True)
+mod = sl.Module.load_from_source(dev, "test1", shader_simple)
 
-lp_source = generate_slang_lp(N, Z2, Z3)
-print("\nLoading Slang module...", flush=True)
-mod = sl.Module.load_from_source(dev, "batch_lp", lp_source)
-print("  module loaded", flush=True)
+# All angles = 0: cos(0)=1, sin(0)=0
+# lp should be: [0.083, 0, 0.083, 0, 0, 0, 0, 0, ...]
+lams_zero = np.zeros((1, N), dtype=np.float32).flatten()
+lams_tensor = Tensor.from_numpy(dev, lams_zero)
+result = mod.batch_lp(grid(shape=(1,)), lams_tensor.storage.device_address, int(1), _result="numpy")
+print("  GPU result:", result, flush=True)
 
-# Small correctness test
-M = 10
-lams = np.random.random((M, N)).astype(np.float32) * np.pi - np.pi / 2
-lams_flat = lams.flatten()
+# Expected: numpy reference
+lp_ref = get_lp_batch(np.zeros((1, N), dtype=np.float32))
+print("  numpy ref: ", lp_ref, flush=True)
+
+# Test 2: Known angles
+print("\n--- Test 2: Known angles ---", flush=True)
+np.random.seed(42)
+lams_test = np.random.random((5, N)).astype(np.float32) * np.pi - np.pi / 2
+lams_flat = lams_test.flatten()
 lams_tensor = Tensor.from_numpy(dev, lams_flat)
 
-print("\nCorrectness test (M=10)...", flush=True)
-result = mod.batch_lp(grid(shape=(M,)), lams_tensor.storage.device_address, int(M), _result="numpy")
-print("  result type:", type(result), flush=True)
-if isinstance(result, np.ndarray):
-    print("  result shape:", result.shape, flush=True)
-    lp_np = get_lp_batch(lams)
-    if result.ndim == 2:
-        result_2d = result
-    elif result.ndim == 1 and result.shape[0] == M * 12:
-        result_2d = result.reshape(M, 12)
-    elif result.ndim == 3:
-        result_2d = result.reshape(M, 12)
-    else:
-        result_2d = result
-    max_err = np.max(np.abs(result_2d - lp_np))
-    print(f"  max error vs numpy: {max_err:.2e}", flush=True)
-    print("  PASS" if max_err < 1e-4 else "  FAIL", flush=True)
-else:
-    print("  result:", result, flush=True)
+for i in range(5):
+    result = mod.batch_lp(grid(shape=(5,)), lams_tensor.storage.device_address, int(5), _result="numpy")
+lp_ref = get_lp_batch(lams_test)
 
-# Benchmark
-print("\nBenchmarking...", flush=True)
-batch_sizes = [1, 10, 100, 1000, 10000, 50000, 100000]
-print("  M        numpy(ms)  gpu(ms)    speedup", flush=True)
-print("  " + "-" * 50, flush=True)
+result_2d = result.reshape(5, 12) if result.ndim != 2 else result
+print("  GPU[0]:", result_2d[0], flush=True)
+print("  np [0]: ", lp_ref[0], flush=True)
+print("  diff[0]:", np.abs(result_2d[0] - lp_ref[0]), flush=True)
+print("  max error:", np.max(np.abs(result_2d - lp_ref)), flush=True)
 
-for M in batch_sizes:
-    lams = np.random.random((M, N)).astype(np.float32) * np.pi - np.pi / 2
-    lams_flat = lams.flatten()
-    lams_tensor = Tensor.from_numpy(dev, lams_flat)
-
-    # Warmup GPU
-    _ = mod.batch_lp(grid(shape=(M,)), lams_tensor.storage.device_address, int(M), _result="numpy")
-
-    # GPU timed
-    t0 = time.perf_counter()
-    for _ in range(20):
-        result_gpu = mod.batch_lp(grid(shape=(M,)), lams_tensor.storage.device_address, int(M), _result="numpy")
-    t_gpu = (time.perf_counter() - t0) / 20
-
-    # Numpy timed
-    t0 = time.perf_counter()
-    for _ in range(20):
-        lp_np = get_lp_batch(lams)
-    t_np = (time.perf_counter() - t0) / 20
-
-    speedup = t_np / t_gpu if t_gpu > 0 else float('inf')
-    print(f"  {M:8d}  {t_np*1000:8.3f}  {t_gpu*1000:8.3f}  {speedup:8.1f}x", flush=True)
+# Test 3: Print individual values for debugging
+print("\n--- Test 3: Debug individual threads ---", flush=True)
+lams_single = np.array([[0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7, -0.8, 0.9, -1.0, 1.1, -1.2]], dtype=np.float32)
+result_s = mod.batch_lp(grid(shape=(1,)), Tensor.from_numpy(dev, lams_single.flatten()).storage.device_address, int(1), _result="numpy")
+result_np = get_lp_batch(lams_single)
+print("  GPU: ", result_s, flush=True)
+print("  numpy:", result_np, flush=True)
+print("  diff: ", np.abs(result_s - result_np), flush=True)

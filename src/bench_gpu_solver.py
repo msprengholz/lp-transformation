@@ -109,7 +109,7 @@ if __name__ == "__main__":
     print("\n--- GPU Batch LP Speed ---", flush=True)
     for M in [100, 1000, 10000, 100000]:
         lams = np.random.random((M, 12)).astype(np.float32) * np.pi - np.pi / 2
-        _, _ = get_lp_gpu_batch(dev, mod, lams[:10])  # warmup
+        _ = get_lp_gpu_batch(dev, mod, lams[:10])  # warmup
         t0 = time.perf_counter()
         for _ in range(5):
             _ = get_lp_gpu_batch(dev, mod, lams)

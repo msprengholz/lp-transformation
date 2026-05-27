@@ -52,7 +52,7 @@ def _load_known_solutions(csv_name):
     sols = set()
     for row in angles_deg:
         row = (row + 90) % 180 - 90
-        sols.add(tuple(np.round(row, decimals)))
+        sols.add(tuple(np.round(row, 1)))
     return sols
 
 

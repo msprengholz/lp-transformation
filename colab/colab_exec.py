@@ -82,9 +82,15 @@ def run_command(cmd, timeout=600):
               input_text=bootstrap)
     # Print stdout from Colab so run_experiment can see METRIC lines
     if r.stdout:
-        print(r.stdout, end="")
+        try:
+            print(r.stdout, end="")
+        except UnicodeEncodeError:
+            print(r.stdout.encode('utf-8', errors='replace').decode('utf-8'), end="")
     if r.stderr and "Traceback" in r.stderr:
-        print(r.stderr, end="", file=sys.stderr)
+        try:
+            print(r.stderr, end="", file=sys.stderr)
+        except UnicodeEncodeError:
+            print(r.stderr.encode('utf-8', errors='replace').decode('utf-8'), end="", file=sys.stderr)
     return r.returncode
 
 

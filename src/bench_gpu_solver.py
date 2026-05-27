@@ -118,23 +118,23 @@ if __name__ == "__main__":
 
     # Test 2: CPU vs GPU per-call LP (single laminate)
     print("\n--- Single-laminate LP: CPU vs GPU ---", flush=True)
-    from src.numpy_fast import get_lp_fast as get_lp_cpu
-    
-    test_lam = np.random.random(12).astype(np.float32) * np.pi - np.pi / 2
+    from src.numpy_fast import get_lp_batch
+    test_lams = np.random.random((1, 12)).astype(np.float32) * np.pi - np.pi / 2
     
     # CPU warmup
     for _ in range(100):
-        _ = get_lp_cpu(test_lam)
+        _ = get_lp_batch(test_lams)
     t0 = time.perf_counter()
     for _ in range(10000):
-        _ = get_lp_cpu(test_lam)
+        _ = get_lp_batch(test_lams)
     t_cpu = (time.perf_counter() - t0) / 10000
     
     # GPU warmup
-    _ = get_lp_gpu(dev, mod, test_lam)
+    test_lam_1d = test_lams[0]
+    _ = get_lp_gpu(dev, mod, test_lam_1d)
     t0 = time.perf_counter()
     for _ in range(1000):
-        _ = get_lp_gpu(dev, mod, test_lam)
+        _ = get_lp_gpu(dev, mod, test_lam_1d)
     t_gpu = (time.perf_counter() - t0) / 1000
     
     print(f"  CPU: {t_cpu*1e6:.0f} µs/call", flush=True)

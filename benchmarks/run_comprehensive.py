@@ -227,31 +227,24 @@ def run():
         print("--- Viquerat 12-layer discovery (GPU) ---", flush=True)
         print("  Using SlangPy GPU for batch LP + iRprop", flush=True)
         
-        best_time = float('inf')
-        best_config = None
+        # Run the best config directly (no parameter sweep)
+        t, starts, found = benchmark_viquerat_gpu(
+            gpu, max_starts=50000, top_k=3000, irprop_iters=100)
+        known_count = len(_load_known_solutions("viquerat_12_layer_solutions_complete.csv"))
+        print(f"  GPU: starts=50000, top_k=3000, iters=100: {t:.3f}s, {found}/{known_count} found", flush=True)
         
-        for max_starts, top_k, iters in [
-            (50000, 3000, 100),  # Best from previous runs
-            (30000, 2000, 100),  # Second best
-            (20000, 1500, 100),  # Fewer starts, tighter top_k
-            (10000, 1500, 100),  # Minimal config
-        ]:
-            t, starts, found = benchmark_viquerat_gpu(
-                gpu, max_starts=max_starts, top_k=top_k, irprop_iters=iters)
-            known_count = len(_load_known_solutions("viquerat_12_layer_solutions_complete.csv"))
-            print(f"  starts={max_starts:>6d}, top_k={top_k:>5d}, iters={iters:>3d}: "
-                  f"{t:.2f}s, {found}/{known_count} found", flush=True)
-            if found >= known_count and t < best_time:
-                best_time = t
-                best_config = (max_starts, top_k, iters)
+        # If not all found, try with more irprop iterations
+        if found < known_count:
+            print("  Retrying with 200 iterations...", flush=True)
+            t2, starts2, found2 = benchmark_viquerat_gpu(
+                gpu, max_starts=50000, top_k=5000, irprop_iters=200)
+            if found2 > found:
+                t, starts, found = t2, starts2, found2
+                print(f"  GPU (retry): {t2:.3f}s, {found2}/{known_count} found", flush=True)
         
-        vq_time = best_time if best_config else 999.0
-        vq_starts = best_config[0] if best_config else 0
-        vq_found = known_count if best_config else 0
-        
-        if best_config:
-            print(f"  Best: starts={best_config[0]}, top_k={best_config[1]}, "
-                  f"iters={best_config[2]}, time={best_time:.3f}s", flush=True)
+        vq_time = t
+        vq_starts = starts
+        vq_found = found
     else:
         print("Comprehensive benchmark [CPU, solver=%s, sobol=%s]" % (
             SOLVER_NAME, HAS_SOBOL), flush=True)

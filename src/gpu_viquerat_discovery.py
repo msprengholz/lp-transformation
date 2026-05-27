@@ -172,9 +172,9 @@ if __name__ == "__main__":
     _ = optimize_laminate_numba(rand[:1], LP_VIQUERAT, n_coarse_fine=1, irprop_grad_tol=1e-3)
     
     # GPU-accelerated discovery
-    t, starts, found = benchmark_gpu_viquerat(dev, mod, max_starts=50000, top_k=3000)
-    print(f"\nGPU: {t:.2f}s, {starts} starts, {found}/112 found", flush=True)
-    print(f"METRIC viquerat_discovery_time={t:.2f}", flush=True)
+    for top_k in [500, 1000, 1500, 2000, 2500, 3000]:
+        t, starts, found = benchmark_gpu_viquerat(dev, mod, max_starts=50000, top_k=top_k)
+        print(f"  top_k={top_k}: {t:.2f}s, {found}/112 found", flush=True)
     
     # CPU reference
     print("\nCPU reference:", flush=True)

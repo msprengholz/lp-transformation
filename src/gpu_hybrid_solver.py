@@ -160,7 +160,7 @@ if __name__ == "__main__":
     print("GPU device initialized", flush=True)
 
     from src.test_cases import LP_VIQUERAT
-    from src.numba_solver import _z2_z3 as z2z3, _norm_factors as nf
+    from src.lp_functions import _z2_z3 as z2z3, _norm_factors as nf
     
     # Test: batch ssearch speed
     print("\n--- Batch ssearch on GPU ---", flush=True)

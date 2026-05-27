@@ -78,7 +78,7 @@ float irprop_step(int call_id,
     }}
     
     for (int k = 0; k < {N}; k++) {{
-        float grad_k = -2.0 * (
+        float grad_k = (
             -2.0 * sin2a[k] * (target_lp[0] - lp[0]) +
              2.0 * cos2[k] * (target_lp[1] - lp[1]) +
             -2.0 * sin4a[k] * (target_lp[2] - lp[2]) +
@@ -92,7 +92,9 @@ float irprop_step(int call_id,
             -2.0 * sin4a[k] * z3[k] * (target_lp[10] - lp[10]) +
              2.0 * cos4[k] * z3[k] * (target_lp[11] - lp[11])
         );
-        grad_k *= -2.0;
+        // grad_k is d_loss/d_lam_k (uphill direction)
+        // Convert to -2*val matching numba convention
+        grad_k = -grad_k * 2.0;
         
         float ss = in_steps[m * {N} + k];
         float pg = in_pgrad[m * {N} + k];

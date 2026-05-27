@@ -229,13 +229,11 @@ def run():
         print("--- Viquerat 12-layer discovery (GPU) ---", flush=True)
         print("  Using SlangPy GPU for batch LP + iRprop", flush=True)
 
-        # Run: 50K + top_k=1000 + 150 iters
-        # Fewer refinements (1000 vs 2000) but more convergence (150 vs 100)
-        # Total GPU ops: 1000×150=150K vs 2000×100=200K (25% fewer)
+        # Run: 50K + top_k=2000 + 100 iters (proven sweet spot)
         t, starts, found = benchmark_viquerat_gpu(
-            gpu, max_starts=50000, top_k=1000, irprop_iters=150)
+            gpu, max_starts=50000, top_k=2000, irprop_iters=100)
         known_count = len(_load_known_solutions("viquerat_12_layer_solutions_complete.csv"))
-        print("  GPU: starts=50000, top_k=1000, iters=150: %.3fs, %d/%d found" % (
+        print("  GPU: starts=50000, top_k=2000, iters=100: %.3fs, %d/%d found" % (
             t, found, known_count), flush=True)
 
         vq_time = t

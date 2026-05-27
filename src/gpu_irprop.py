@@ -123,14 +123,23 @@ float irprop_step(int call_id,
 
 
 def gpu_batch_irprop(dev, mod, lams_init, target_lp, max_iter=100):
-    """Run batch iRprop on GPU. All M starts processed in parallel."""
+    """Run batch iRprop on GPU. Optimized: reuse buffers, vectorized tracking."""
     M, N_layers = lams_init.shape
     MS = M * N_layers
     
+    # Pre-allocate host buffers (reused across iterations, in-place updates)
     angles = lams_init.flatten().astype(np.float32).copy()
     step_sizes = np.full(MS, 0.01, dtype=np.float32)
     prev_grad = np.zeros(MS, dtype=np.float32)
     target = target_lp.astype(np.float32)
+    
+    # Pre-allocate output buffers (one set reused per iteration)
+    out_a_buf = np.empty(MS, dtype=np.float32)
+    out_s_buf = np.empty(MS, dtype=np.float32)
+    out_g_buf = np.empty(MS, dtype=np.float32)
+    
+    # Pre-upload target (constant, upload once)
+    tgt_t = Tensor.from_numpy(dev, target)
     
     best_angles = angles.copy()
     best_losses = np.full(M, 1e10, dtype=np.float32)
@@ -139,17 +148,16 @@ def gpu_batch_irprop(dev, mod, lams_init, target_lp, max_iter=100):
         in_a = Tensor.from_numpy(dev, angles)
         in_s = Tensor.from_numpy(dev, step_sizes)
         in_g = Tensor.from_numpy(dev, prev_grad)
-        tgt = Tensor.from_numpy(dev, target)
-        out_a = Tensor.from_numpy(dev, np.empty(MS, dtype=np.float32))
-        out_s = Tensor.from_numpy(dev, np.empty(MS, dtype=np.float32))
-        out_g = Tensor.from_numpy(dev, np.empty(MS, dtype=np.float32))
+        out_a = Tensor.from_numpy(dev, out_a_buf)
+        out_s = Tensor.from_numpy(dev, out_s_buf)
+        out_g = Tensor.from_numpy(dev, out_g_buf)
         
         losses = mod.irprop_step(
             grid(shape=(M,)),
             in_a.storage.device_address,
             in_s.storage.device_address,
             in_g.storage.device_address,
-            tgt.storage.device_address,
+            tgt_t.storage.device_address,
             out_a.storage.device_address,
             out_s.storage.device_address,
             out_g.storage.device_address,
@@ -157,21 +165,23 @@ def gpu_batch_irprop(dev, mod, lams_init, target_lp, max_iter=100):
             _result="numpy"
         )
         
-        # Read back outputs
-        new_angles = out_a.storage.to_numpy().view(np.float32)[:MS].copy()
-        new_steps = out_s.storage.to_numpy().view(np.float32)[:MS].copy()
-        new_pgrad = out_g.storage.to_numpy().view(np.float32)[:MS].copy()
+        # Read back into temporary arrays
+        new_angles = out_a.storage.to_numpy().view(np.float32)[:MS]
+        new_steps = out_s.storage.to_numpy().view(np.float32)[:MS]
+        new_pgrad = out_g.storage.to_numpy().view(np.float32)[:MS]
         
-        # Update best
-        for m in range(M):
-            if losses[m] < best_losses[m]:
-                best_losses[m] = losses[m]
-                best_angles[m*N_layers:(m+1)*N_layers] = new_angles[m*N_layers:(m+1)*N_layers]
+        # Vectorized best tracking
+        improved = losses < best_losses
+        if np.any(improved):
+            best_losses[improved] = losses[improved]
+            for m in np.where(improved)[0]:
+                s = m * N_layers; e = s + N_layers
+                best_angles[s:e] = new_angles[s:e]
         
-        # Swap for next iteration
-        angles = new_angles
-        step_sizes = new_steps
-        prev_grad = new_pgrad
+        # Copy into pre-allocated buffers for next iteration
+        np.copyto(angles, new_angles)
+        np.copyto(step_sizes, new_steps)
+        np.copyto(prev_grad, new_pgrad)
     
     return best_angles.reshape(M, N_layers), best_losses
 

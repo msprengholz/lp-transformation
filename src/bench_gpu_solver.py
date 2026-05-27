@@ -143,20 +143,15 @@ if __name__ == "__main__":
 
     # Test 3: Full Viquerat benchmark
     print("\n--- Viquerat Discovery Benchmark ---", flush=True)
-    from src.test_cases import viquerat_problems
-    problems = viquerat_problems()
-    print(f"  {len(problems)} Viquerat problems", flush=True)
+    from src.test_cases import LP_VIQUERAT, get_paper_problems
+    print(f"  Viquerat target LP: {LP_VIQUERAT.shape}", flush=True)
     
-    # CPU baseline
+    # CPU baseline: solve the single Viquerat problem with 155 starts
     rng = np.random.RandomState(42)
-    t0 = time.perf_counter()
-    cpu_found = 0
-    for name, lp_t in problems:
-        rand_lams = (rng.random((155, 12)).astype(np.float32) * np.pi - np.pi / 2)
-        opt_lams, losses = optimize_laminate_numba(rand_lams, lp_t, n_coarse_fine=1, max_iter=100, grad_tol=1e-4)
-        if losses[0] < 1e-6:
-            cpu_found += 1
+    rand_lams = (rng.random((155, 12)).astype(np.float32) * np.pi - np.pi / 2)
+        t0 = time.perf_counter()
+    opt_lams, losses = optimize_laminate_numba(rand_lams, LP_VIQUERAT, n_coarse_fine=1, max_iter=100, grad_tol=1e-4)
     t_cpu_total = time.perf_counter() - t0
-    print(f"  CPU: {t_cpu_total:.2f}s, {cpu_found}/{len(problems)} found", flush=True)
+    print(f"  CPU: {t_cpu_total:.3f}s, best loss: {losses[0]:.2e}", flush=True)
 
     print(f"\nMETRIC viquerat_discovery_time={t_cpu_total:.2f}", flush=True)

@@ -229,18 +229,19 @@ def run():
         print("--- Viquerat 12-layer discovery (GPU) ---", flush=True)
         print("  Using SlangPy GPU for batch LP + iRprop", flush=True)
 
-        # Run with top_k=1500 (fewer refinements, expect similar coverage)
+        # Run: 100K Sobol + top_k=2000 + 75 iters
+        # More coverage allows fewer refinements, 75 iters between 50(108/112) and 100(112/112)
         t, starts, found = benchmark_viquerat_gpu(
-            gpu, max_starts=50000, top_k=1500, irprop_iters=100)
+            gpu, max_starts=100000, top_k=2000, irprop_iters=75)
         known_count = len(_load_known_solutions("viquerat_12_layer_solutions_complete.csv"))
-        print("  GPU: starts=50000, top_k=1500, iters=100: %.3fs, %d/%d found" % (
+        print("  GPU: starts=100000, top_k=2000, iters=75: %.3fs, %d/%d found" % (
             t, found, known_count), flush=True)
 
-        # If not all found, retry with larger top_k
+        # If not all found, fallback to 100 iters + 3000 top_k
         if found < known_count:
-            print("  Retrying with top_k=3000...", flush=True)
+            print("  Retrying with 100 iters, top_k=3000...", flush=True)
             t2, starts2, found2 = benchmark_viquerat_gpu(
-                gpu, max_starts=50000, top_k=3000, irprop_iters=100)
+                gpu, max_starts=100000, top_k=3000, irprop_iters=100)
             print("  GPU (retry): %.3fs, %d/%d found" % (
                 t2, found2, known_count), flush=True)
             if found2 > found:

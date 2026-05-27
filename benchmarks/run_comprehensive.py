@@ -3,14 +3,14 @@
 Comprehensive benchmark with automatic GPU acceleration.
 
 Strategy:
-1. If SlangPy GPU is available: Sobol → GPU batch LP filter → GPU iRprop
+1. If SlangPy GPU is available: Sobol -> GPU batch LP filter -> GPU iRprop
 2. Falls back to CPU (numba) if GPU unavailable
 
 The GPU path evaluates ALL Sobol starts on GPU in one batch, selects top-K,
 then refines with GPU iRprop. This is 10-50x faster than CPU.
 """
 import sys, os, time
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 import numpy as np
 from src.lp_functions import _z2_z3, _norm_factors, compute_lp_rmse
@@ -95,17 +95,17 @@ def _try_gpu():
         import slangpy as sl
         from src.gpu_lp import create_gpu_lp_solver, batch_lp_gpu
         from src.gpu_irprop import SLANG_IRPROP_STEP2, gpu_batch_irprop
-        
+
         N = 12
         Z2, Z3 = _z2_z3(N)
         dev, mod_lp = create_gpu_lp_solver(N, Z2, Z3)
         mod_irprop = sl.Module.load_from_source(dev, "irprop_step2_12", SLANG_IRPROP_STEP2)
-        
+
         # Warmup
         warmup = np.random.random((100, N)).astype(np.float32) * np.pi - np.pi / 2
         _ = batch_lp_gpu(dev, mod_lp, warmup, N)
         _ = gpu_batch_irprop(dev, mod_irprop, warmup, LP_VIQUERAT, max_iter=10)
-        
+
         return {'dev': dev, 'mod_lp': mod_lp, 'mod_irprop': mod_irprop,
                 'batch_lp_gpu': batch_lp_gpu, 'gpu_batch_irprop': gpu_batch_irprop}
     except Exception as e:
@@ -113,37 +113,37 @@ def _try_gpu():
         return None
 
 
-def benchmark_viquerat_gpu(gpu, max_starts=10000, top_k=1500, irprop_iters=100):
+def benchmark_viquerat_gpu(gpu, max_starts=50000, top_k=3000, irprop_iters=100):
     """GPU-accelerated Viquerat discovery."""
     batch_lp_gpu = gpu['batch_lp_gpu']
     gpu_batch_irprop = gpu['gpu_batch_irprop']
     dev = gpu['dev']
     mod_lp = gpu['mod_lp']
     mod_irprop = gpu['mod_irprop']
-    
+
     known = _load_known_solutions("viquerat_12_layer_solutions_complete.csv")
     target_count = len(known)
     found = set()
     target = LP_VIQUERAT
     N = 12
-    
+
     sampler = Sobol(d=N, scramble=True, seed=42)
-    
+
     t_start = time.perf_counter()
-    
+
     # Phase 1: Sobol + GPU LP filter
     sobol_starts = sampler.random(max_starts).astype(np.float32) * np.pi - np.pi / 2
     lps = batch_lp_gpu(dev, mod_lp, sobol_starts, N)
     losses = np.sum((lps - target) ** 2, axis=1)
     starts_used = max_starts
-    
+
     # Phase 2: Top-K + GPU iRprop
     top_k_actual = min(top_k, max_starts)
     top_indices = np.argsort(losses)[:top_k_actual]
     best_starts = sobol_starts[top_indices]
-    
+
     best_angles, best_losses = gpu_batch_irprop(dev, mod_irprop, best_starts, target, max_iter=irprop_iters)
-    
+
     # Collect solutions - sort by loss first for early stopping
     sorted_indices = np.argsort(best_losses)
     for idx in sorted_indices:
@@ -155,29 +155,31 @@ def benchmark_viquerat_gpu(gpu, max_starts=10000, top_k=1500, irprop_iters=100):
                 if len(found) >= target_count:
                     elapsed = time.perf_counter() - t_start
                     return elapsed, starts_used, len(found)
-    
-    # If not all found with first batch, try more starts
-    if len(found) < target_count and starts_used < max_starts * 3:
+
+    # If not all found, try more starts
+    if len(found) < target_count:
         more_starts = sampler.random(max_starts).astype(np.float32) * np.pi - np.pi / 2
         lps2 = batch_lp_gpu(dev, mod_lp, more_starts, N)
         losses2 = np.sum((lps2 - target) ** 2, axis=1)
-        all_starts2 = np.vstack([sobol_starts, more_starts])
-        all_losses2 = np.concatenate([losses, losses2])
-        top_indices2 = np.argsort(all_losses2)[:top_k_actual]
-        best_starts2 = all_starts2[top_indices2]
-        
+        all_starts = np.vstack([sobol_starts, more_starts])
+        all_losses = np.concatenate([losses, losses2])
+        starts_used = max_starts * 2
+
+        top_indices2 = np.argsort(all_losses)[:top_k_actual]
+        best_starts2 = all_starts[top_indices2]
+
         best_angles2, best_losses2 = gpu_batch_irprop(dev, mod_irprop, best_starts2, target, max_iter=irprop_iters)
-        
-        for i in range(top_k_actual):
-            if best_losses2[i] < 0.1:
-                rmse = compute_lp_rmse(best_angles2[i].astype(np.float32), target)
+
+        for idx in np.argsort(best_losses2):
+            if best_losses2[idx] < 0.1:
+                rmse = compute_lp_rmse(best_angles2[idx].astype(np.float32), target)
                 if rmse < 2e-2:
-                    key = _round_key(best_angles2[i])
+                    key = _round_key(best_angles2[idx])
                     found.add(key)
                     if len(found) >= target_count:
                         elapsed = time.perf_counter() - t_start
-                        return elapsed, starts_used * 2, len(found)
-    
+                        return elapsed, starts_used, len(found)
+
     elapsed = time.perf_counter() - t_start
     return elapsed, starts_used, len(found)
 
@@ -218,38 +220,45 @@ def benchmark_viquerat_cpu(max_starts=50000):
 
 def run():
     gpu = _try_gpu()
-    
+
     if gpu is not None:
         print("Comprehensive benchmark [GPU-accelerated, solver=%s, sobol=%s]" % (
             "gpu+cpu", HAS_SOBOL), flush=True)
-        
+
         # Viquerat discovery using GPU
         print("--- Viquerat 12-layer discovery (GPU) ---", flush=True)
         print("  Using SlangPy GPU for batch LP + iRprop", flush=True)
-        
-        # Run with optimized parameters
-        # Try fewer iRprop iterations first (GPU speedup)
+
+        # Run with best-known parameters
         t, starts, found = benchmark_viquerat_gpu(
-            gpu, max_starts=50000, top_k=3000, irprop_iters=50)
+            gpu, max_starts=50000, top_k=3000, irprop_iters=100)
         known_count = len(_load_known_solutions("viquerat_12_layer_solutions_complete.csv"))
-        print(f"  GPU (50 iters): starts=50000, top_k=3000: {t:.3f}s, {found}/{known_count} found", flush=True)
-        
-        # If not all found, retry with more iterations
+        print("  GPU: starts=50000, top_k=3000, iters=100: %.3fs, %d/%d found" % (
+            t, found, known_count), flush=True)
+
+        # If not all found, retry with more starts/iterations
         if found < known_count:
-            print("  Retrying with 100 iterations...", flush=True)
+            print("  Retrying with 100K starts...", flush=True)
             t2, starts2, found2 = benchmark_viquerat_gpu(
-                gpu, max_starts=50000, top_k=3000, irprop_iters=100)
-            print(f"  GPU (100 iters): {t2:.3f}s, {found2}/{known_count} found", flush=True)
+                gpu, max_starts=100000, top_k=5000, irprop_iters=200)
+            print("  GPU (retry): %.3fs, %d/%d found" % (
+                t2, found2, known_count), flush=True)
             if found2 > found:
                 t, starts, found = t2, starts2, found2
-        
+
         vq_time = t
         vq_starts = starts
         vq_found = found
+
+        if found >= known_count:
+            print("  Best: %.3fs for %d/%d solutions" % (vq_time, vq_found, known_count), flush=True)
+        else:
+            print("  WARNING: Only found %d/%d solutions" % (vq_found, known_count), flush=True)
+
     else:
         print("Comprehensive benchmark [CPU, solver=%s, sobol=%s]" % (
             SOLVER_NAME, HAS_SOBOL), flush=True)
-        
+
         print("--- Viquerat 12-layer discovery (CPU) ---", flush=True)
         vq_time, vq_starts, vq_found = benchmark_viquerat_cpu()
 

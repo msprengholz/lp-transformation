@@ -150,7 +150,7 @@ if __name__ == "__main__":
     rng = np.random.RandomState(42)
     rand_lams = (rng.random((155, 12)).astype(np.float32) * np.pi - np.pi / 2)
     t0 = time.perf_counter()
-    opt_lams, losses = optimize_laminate_numba(rand_lams, LP_VIQUERAT, n_coarse_fine=1, max_iter=100, grad_tol=1e-4)
+    opt_lams, losses = optimize_laminate_numba(rand_lams, LP_VIQUERAT, n_coarse_fine=1, irprop_iters=100, irprop_grad_tol=1e-4)
     t_cpu_total = time.perf_counter() - t0
     print(f"  CPU: {t_cpu_total:.3f}s, best loss: {losses[0]:.2e}", flush=True)
 

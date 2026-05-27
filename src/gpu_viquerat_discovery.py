@@ -88,11 +88,11 @@ def _load_known_solutions():
     if not path.exists():
         return set()
     with open(path) as f:
-        reader = csv.reader(f)
-        next(reader)  # skip header
+        reader = csv.reader(f, delimiter=';')
         for row in reader:
-            angles = tuple(round(float(a), 1) for a in row[:12])
-            solutions.add(angles)
+            if len(row) >= 13:
+                angles = tuple(round(float(a), 1) for a in row[1:13])
+                solutions.add(angles)
     return solutions
 
 

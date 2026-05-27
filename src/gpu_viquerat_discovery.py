@@ -172,9 +172,18 @@ if __name__ == "__main__":
     _ = optimize_laminate_numba(rand[:1], LP_VIQUERAT, n_coarse_fine=1, irprop_grad_tol=1e-3)
     
     # GPU-accelerated discovery
-    for max_starts in [10000, 20000, 30000, 50000]:
-        t, starts, found = benchmark_gpu_viquerat(dev, mod, max_starts=max_starts, top_k=min(1500, max_starts))
+    for max_starts in [10000, 20000, 50000]:
+        t, starts, found = benchmark_gpu_vquierat(dev, mod, max_starts=max_starts, top_k=min(1500, max_starts))
         print(f"  max_starts={max_starts}: {t:.2f}s, {found}/112 found", flush=True)
+    
+    # 48-layer test
+    from src.test_cases import LP_SPRENGHOLZ_48
+    print("\n--- 48-layer Sprengholz GPU test ---", flush=True)
+    from scipy.stats.qmc import Sobol
+    sampler48 = Sobol(d=48, scramble=True, seed=42)
+    starts_48 = sampler48.random(10000).astype(np.float32) * np.pi - np.pi / 2
+    t0 = time.perf_counter()
+    print(f"  Note: Cannot use 12-layer shader for 48-layer problem.", flush=True)
     
     # CPU reference
     print("\nCPU reference:", flush=True)
